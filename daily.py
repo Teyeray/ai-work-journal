@@ -23,30 +23,9 @@ REPORTS = BASE / "reports"
 REPORTS.mkdir(exist_ok=True)
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo
 
-PROMPT = """你是我的工作日志助手。我是 AI 工程师。下面附了一份自动采集的原始活动数据,包含:电脑使用统计、AI 编程助手会话、Git 提交、屏幕 OCR、飞书协作。
+# template lives in templates/daily.md; edit that file to change the report format
+PROMPT = (BASE / "templates" / "daily.md").read_text(encoding="utf-8")
 
-请严格按下面的通用工作日报模板(百度文库/飞书模板中心标准结构)写今天的中文日报,输出 Markdown,不要输出其他内容:
-
-# 工作日报 {date}
-
-## 一、今日完成
-按项目分组,投入降序。每个项目列具体任务,每条任务注明完成状态(已完成/进行中/受阻)。
-无法归入项目的环境配置、工具调试等合并到末尾“其他”一条。
-
-## 二、问题与风险
-今天遇到的问题:问题描述、影响、已采取的措施、需谁协助。没有则写“无”。
-
-## 三、明日计划
-按优先级列 1-3 条。只能从数据线索推断(未完成工作、TODO、计划文件、会话中的待办);无可靠线索则写“(待人工补充)”,不要编造。
-
-## 四、备注
-数据采集缺失或异常,一句话。无则省略。
-
-硬性规则:
-1. 一切内容归入项目分组,不按数据来源(会话/提交/飞书/屏幕)分节。
-2. 项目名从数据推断(目录名、仓库名),全篇同一写法。
-3. 飞书消息、文件、汇报材料归入所属项目,没有对应项目就新开项目分组。
-4. 只依据数据,不编造;时间用 HH:MM;简明准确,不堆砌技术细节。"""
 
 
 def run_pi(prompt, attachment, timeout=900):

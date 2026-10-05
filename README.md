@@ -17,10 +17,15 @@
   飞书(lark-cli 用户身份)      当天会话消息、收发文件及内容预览
 
 流水线
-  collect.py  采集某天数据 → data/<date>.digest.md
-  daily.py    digest → pi 无头总结 → reports/<date>.md → 推飞书
-  weekly.py   7 天日报 → pi 总结 → reports/weekly/<isoyear>-W<ww>.md → 推飞书
-  feishu.py   markdown 导入飞书为 docx(lark-cli 未授权时自动跳过)
+  collect.py   采集某天数据 → data/<date>.digest.md
+  daily.py     digest → pi 无头总结 → reports/<date>.md → 推飞书
+  weekly.py    7 天日报 → pi 总结 → reports/weekly/<isoyear>-W<ww>.md → 推飞书
+  feishu.py    markdown 导入飞书为 docx(lark-cli 未授权时自动跳过)
+
+模板
+  templates/daily.md    日报模板+提示词(百度文库/飞书模板中心标准结构)
+  templates/weekly.md   周报模板+提示词
+  改模板只需编辑这两个文件,含 {date}/{label} 占位符,保存即生效。
 
 调度(systemd 用户定时器)
   ai-journal-daily.timer    每天 23:00
@@ -67,6 +72,12 @@ lark-cli config init --new
 - top_apps / top_titles_per_app / sp_samples: 摘要容量
 
 改完运行 `journal collect` 验证。
+
+## 修改报告模板
+
+编辑 templates/daily.md 或 templates/weekly.md,保存即生效。
+下次生成(每晚 23:00 / 每周五 23:30,或手动 journal daily/weekly)即按新模板输出。
+模板里 {date} 和 {label} 是占位符,保留即可。
 
 ## 服务管理
 
