@@ -14,6 +14,7 @@
   ~/.claude/projects/**.jsonl    Claude Code 会话
   ~/.pi/agent/sessions/**.jsonl  pi 会话
   project_roots 下各 git 仓库    当日提交
+  飞书(lark-cli 用户身份)      当天会话消息、收发文件及内容预览
 
 流水线
   collect.py  采集某天数据 → data/<date>.digest.md
@@ -78,5 +79,7 @@ journalctl --user -u ai-journal-daily.service -n 50        # 看日报生成日�
 
 - ScreenPipe 无麦克风输入时健康检查显示 degraded,不影响屏幕采集。
 - OCR 中文样本有乱码,仅作线索,不影响日报主体。
+- 飞书消息只采集授权身份可见的会话;最多下载 8 个文件,每个预览 1200 字。
+- 图片只记录不读内容;PDF 读前 3 页;docx 提取正文文本。
 - ActivityWatch 应用时长从部署时刻起累计,历史天数无窗口数据。
 - pi 会话目录名按 "-" 解码路径,目录名本身含 "-" 时会得到近似路径。
