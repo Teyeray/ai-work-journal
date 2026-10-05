@@ -63,13 +63,13 @@ def run_pi(prompt, attachment, timeout=900):
 def main():
     d = parse_date(sys.argv[1] if len(sys.argv) > 1 else None)
     digest = DATA / f"{d.isoformat()}.digest.md"
+    # always re-collect: manual runs earlier in the day must not pin stale data
+    r = subprocess.run([sys.executable, str(BASE / "collect.py"), d.isoformat()],
+                       capture_output=True, text=True)
+    print(r.stdout.strip() or r.stderr.strip())
     if not digest.exists():
-        r = subprocess.run([sys.executable, str(BASE / "collect.py"), d.isoformat()],
-                           capture_output=True, text=True)
-        print(r.stdout.strip() or r.stderr.strip())
-        if not digest.exists():
-            print(f"no digest for {d}, abort")
-            sys.exit(1)
+        print(f"no digest for {d}, abort")
+        sys.exit(1)
     report_path = REPORTS / f"{d.isoformat()}.md"
     prompt = PROMPT.replace("{date}", d.isoformat())
     try:

@@ -44,6 +44,13 @@ def main():
               "授权方法: 终端运行 lark-cli config init --new 并按提示打开浏览器。")
         sys.exit(0)
     name = f"AI 工作日志 {f.stem}"
+    # replace semantics: delete the previous doc for the same report file
+    maps = json.loads(MAP.read_text()) if MAP.exists() else {}
+    old = (maps.get(f.name) or {}).get("token")
+    if old:
+        subprocess.run([LARK, "drive", "+delete", "--file-token", old,
+                        "--type", "docx", "--yes"],
+                       capture_output=True, text=True, timeout=60)
     r = subprocess.run([LARK, "drive", "+import", "--file", str(f),
                         "--type", "docx", "--name", name],
                        capture_output=True, text=True, timeout=120)
@@ -54,8 +61,9 @@ def main():
     url = ""
     if isinstance(d, dict) and d.get("ok"):
         url = (d.get("data") or {}).get("url") or ""
-        maps = json.loads(MAP.read_text()) if MAP.exists() else {}
-        maps[f.name] = {"url": url, "pushed_at": __import__("datetime").datetime.now().isoformat()}
+        token = (d.get("data") or {}).get("token") or url.rsplit("/", 1)[-1]
+        maps[f.name] = {"url": url, "token": token,
+                        "pushed_at": __import__("datetime").datetime.now().isoformat()}
         MAP.write_text(json.dumps(maps, ensure_ascii=False, indent=1))
         print(f"feishu: pushed {f.name} -> {url}")
     else:
