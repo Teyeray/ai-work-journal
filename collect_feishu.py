@@ -62,11 +62,16 @@ def file_meta(msg):
     """Return (name, file_key, size) for file-type messages, else None."""
     if msg.get("msg_type") != "file":
         return None
+    content = msg.get("content") or ""
     try:
-        d = json.loads(msg.get("content") or "{}")
+        d = json.loads(content)
         return d.get("file_name") or "?", d.get("file_key"), d.get("size_in_byte") or 0
     except json.JSONDecodeError:
-        return None
+        pass
+    m = re.search(r'<file\s+key="([^"]+)"\s+name="([^"]*)"', content)
+    if m:
+        return m.group(2) or "?", m.group(1), 0
+    return None
 
 
 def read_preview(path):
@@ -93,6 +98,18 @@ def read_preview(path):
             return re.sub(r"\s+", " ", text)[:1200]
         except (zipfile.BadZipFile, KeyError):
             return "(docx 解析失败)"
+    if ext == ".pptx":
+        try:
+            parts = []
+            with zipfile.ZipFile(path) as z:
+                for name in sorted(n for n in z.namelist()
+                                    if re.match(r"ppt/slides/slide\d+\.xml$", n)):
+                        xml = z.read(name).decode("utf-8", errors="replace")
+                        parts.append(re.sub(r"<[^>]+>", " ", xml))
+            text = re.sub(r"\s+", " ", " ".join(parts))
+            return text[:1200] or "(pptx 无文本)"
+        except (zipfile.BadZipFile, KeyError):
+            return "(pptx 解析失败)"
     if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
         return "(图片)"
     return f"(二进制 {ext or '无扩展名'}, {size} bytes)"
@@ -134,8 +151,9 @@ def collect(start, end):
             fm = file_meta(msg)
             if fm:
                 fname, fkey, fsize = fm
+                size_note = f" ({fsize}B)" if fsize else ""
                 entry["excerpts"].append(
-                    f"{msg.get('create_time','')[-5:]} {who}: [文件] {fname} ({fsize}B)")
+                    f"{msg.get('create_time','')[-5:]} {who}: [文件] {fname}{size_note}")
                 out["files"].append({"name": fname, "key": fkey, "size": fsize,
                                      "chat": name, "from": who,
                                      "message_id": msg.get("message_id"),
