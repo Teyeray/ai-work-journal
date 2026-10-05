@@ -1,0 +1,19 @@
+{
+  "aw_url": "http://localhost:5600",
+  "aw_host": "workstation-2700",
+  "sp_url": "http://localhost:3030",
+  "sp_token_file": "/home/yangrm/.config/ai-work-journal/screenpipe-token",
+  "claude_dir": "/home/yangrm/.claude/projects",
+  "pi_dir": "/home/yangrm/.pi/agent/sessions",
+  "project_roots": [
+    "/home/yangrm/Documents/projects",
+    "/home/yangrm/Projects",
+    "/home/yangrm/kaggle"
+  ],
+  "git_max_depth": 3,
+  "pi_bin": "/home/yangrm/.local/bin/pi",
+  "lark_bin": "/home/yangrm/.local/bin/lark-cli",
+  "top_apps": 25,
+  "top_titles_per_app": 3,
+  "sp_samples": 8
+}

@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Push a markdown report to Feishu as a docx document.
+
+Skips silently (exit 0) when lark-cli is not authorized, so timers stay green.
+
+Usage: feishu.py <report.md>
+"""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+LARK = CFG["lark_bin"]
+MAP = BASE / "data" / "feishu-map.json"
+
+
+def auth_ok():
+    try:
+        r = subprocess.run([LARK, "auth", "status"], capture_output=True,
+                           text=True, timeout=20)
+        d = json.loads(r.stdout)
+        return bool(d.get("ok"))
+    except Exception:
+        return False
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: feishu.py <report.md>")
+        sys.exit(2)
+    f = Path(sys.argv[1]).resolve()
+    if not f.exists():
+        print(f"not found: {f}")
+        sys.exit(2)
+    if not auth_ok():
+        print("feishu: lark-cli 未授权,跳过推送。"
+              "授权方法: 终端运行 lark-cli config init --new 并按提示打开浏览器。")
+        sys.exit(0)
+    name = f"AI 工作日志 {f.stem}"
+    r = subprocess.run([LARK, "drive", "+import", "--file", str(f),
+                        "--type", "docx", "--name", name],
+                       capture_output=True, text=True, timeout=120)
+    try:
+        d = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        d = None
+    url = ""
+    if isinstance(d, dict) and d.get("ok"):
+        url = (d.get("data") or {}).get("url") or ""
+        maps = json.loads(MAP.read_text()) if MAP.exists() else {}
+        maps[f.name] = {"url": url, "pushed_at": __import__("datetime").datetime.now().isoformat()}
+        MAP.write_text(json.dumps(maps, ensure_ascii=False, indent=1))
+        print(f"feishu: pushed {f.name} -> {url}")
+    else:
+        print(f"feishu: import failed: {(r.stdout or r.stderr)[-300:]}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
