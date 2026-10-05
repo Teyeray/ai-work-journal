@@ -25,6 +25,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import collect_feishu
+
 BASE = Path(__file__).resolve().parent
 CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
 DATA = BASE / "data"
@@ -414,6 +416,25 @@ def write_digest(d, data):
         for i, t in enumerate(sp.get("samples", []), 1):
             clean = re.sub(r"\s+", " ", t)
             lines.append(f"- 样本{i}: {clean}")
+    fs = data.get("feishu") or {}
+    lines.append("")
+    lines.append("## 5. 飞书协作")
+    if fs.get("error"):
+        lines.append(f"- {fs['error']}")
+    elif not fs.get("chats"):
+        lines.append("- 当天无可见会话消息")
+    else:
+        for c in fs["chats"]:
+            kind = "私聊" if c.get("mode") == "p2p" else "群"
+            lines.append(f"### {kind} {c['chat']} — {c['total']} 条消息(我发 {c['mine']} 条)"
+                         + (f", 分享文档链接 {c['doc_links']} 次" if c.get("doc_links") else ""))
+            for ex in c["excerpts"]:
+                lines.append(f"- {ex}")
+        if fs.get("files"):
+            lines.append("")
+            lines.append("收到的文件:")
+            for f in fs["files"][:8]:
+                lines.append(f"- {f.get('time','')} [{f.get('chat','')}] {f.get('name')} — {f.get('preview','')[:400]}")
     return "\n".join(lines) + "\n"
 
 
@@ -427,6 +448,7 @@ def main():
         "agent_sessions": collect_claude(start, end) + collect_pi(start, end),
         "git": collect_git(start, end),
         "screenpipe": collect_screenpipe(start, end),
+        "feishu": collect_feishu.collect(start, end),
     }
     (DATA / f"{d.isoformat()}.json").write_text(
         json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
