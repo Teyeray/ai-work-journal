@@ -21,9 +21,14 @@ def auth_ok():
         r = subprocess.run([LARK, "auth", "status"], capture_output=True,
                            text=True, timeout=20)
         d = json.loads(r.stdout)
-        return bool(d.get("ok"))
     except Exception:
         return False
+    if d.get("ok"):
+        return True
+    ids = d.get("identities") or {}
+    user = ids.get("user") or {}
+    bot = ids.get("bot") or {}
+    return bool(user.get("available") or bot.get("available"))
 
 
 def main():

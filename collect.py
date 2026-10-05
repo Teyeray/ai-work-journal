@@ -276,6 +276,7 @@ def collect_pi(start, end):
 
 def collect_git(start, end):
     repos = []
+    seen_commits = set()
     depth = CFG.get("git_max_depth", 3)
     until = end.strftime("%Y-%m-%d %H:%M")
     since = start.strftime("%Y-%m-%d %H:%M")
@@ -300,7 +301,8 @@ def collect_git(start, end):
             commits = []
             for ln in (r.stdout or "").splitlines():
                 parts = ln.split("|", 2)
-                if len(parts) == 3:
+                if len(parts) == 3 and parts[0] not in seen_commits:
+                    seen_commits.add(parts[0])
                     commits.append({"hash": parts[0], "time": parts[1],
                                     "subject": parts[2][:120]})
             if commits:
