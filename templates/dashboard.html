@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 工作日志看板 __RANGE__</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans CJK SC", sans-serif;
+         background: #f5f6f8; color: #1e293b; margin: 0; }
+  header { max-width: 1240px; margin: 0 auto; padding: 20px 22px 10px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { font-size: 12.5px; color: #64748b; }
+  .tabs { display: flex; gap: 8px; margin-top: 12px; }
+  .tabs button { border: 1px solid #e2e8f0; background: #fff; color: #475569;
+                 border-radius: 8px; padding: 6px 18px; font-size: 13.5px; cursor: pointer; }
+  .tabs button.on { background: #1e293b; color: #fff; border-color: #1e293b; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 22px 40px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px;
+          box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+  .card.w2 { grid-column: 1 / -1; }
+  .card h3 { margin: 0 0 8px; font-size: 14px; color: #334155; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; }
+  .kpi .v { font-size: 19px; font-weight: 650; color: #0f172a; }
+  .kpi .l { font-size: 11.5px; color: #64748b; margin-top: 2px; }
+  .chart { width: 100%; height: auto; display: block; }
+  .gridline { stroke: #eef2f7; }
+  .ax { font-size: 10px; fill: #64748b; }
+  .axr { text-anchor: end; }
+  .axc { text-anchor: middle; }
+  .bar { cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 5px 14px; font-size: 12px; color: #475569; margin: 2px 0 6px; }
+  .leg { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .dot { width: 9px; height: 9px; border-radius: 2.5px; display: inline-block; flex: none; }
+  table.day { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.day th, table.day td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; text-align: left;
+                               vertical-align: top; }
+  table.day th { color: #64748b; font-weight: 600; font-size: 11.5px; }
+  .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: #f1f5f9;
+          border-radius: 5px; padding: 1px 6px; font-size: 11.5px; white-space: nowrap; }
+  .daybar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .daybar button, .daybar select { border: 1px solid #e2e8f0; background: #fff; color: #334155;
+          border-radius: 8px; padding: 6px 14px; font-size: 13.5px; cursor: pointer; }
+  .daybar select { padding: 6px 8px; }
+  .daytitle { font-size: 16px; font-weight: 650; }
+  .mut { color: #64748b; }
+  .sm { font-size: 12px; }
+  .list { font-size: 12.5px; line-height: 1.55; }
+  .list li { margin-bottom: 3px; }
+  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .cols3 { grid-template-columns: 1fr; } }
+  #tip { position: fixed; display: none; background: rgba(15,23,42,.94); color: #f8fafc;
+         padding: 8px 11px; border-radius: 8px; font-size: 12px; max-width: 360px;
+         pointer-events: none; z-index: 99; line-height: 1.55; }
+  #tip b { color: #e2e8f0; }
+  footer { max-width: 1240px; margin: 0 auto; padding: 0 22px 30px; color: #94a3b8; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI 工作日志看板</h1>
+  <div class="sub">__RANGE__ · __NDAYS__ 天 · 生成于 __GENERATED__</div>
+  <div class="tabs">
+    <button id="tabOv" class="on">总览</button>
+    <button id="tabDay">单日详情</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="ovKpis" class="kpis"></div>
+  <div id="ov" class="grid"></div>
+  <div id="dv" hidden>
+    <div class="daybar">
+      <button id="dPrev">← 前一天</button>
+      <span class="daytitle" id="dTitle"></span>
+      <button id="dNext">后一天 →</button>
+      <select id="dSel"></select>
+    </div>
+    <div id="dvKpis" class="kpis"></div>
+    <div id="dvGrid" class="grid"></div>
+    <div id="dvCols" class="cols3" style="margin-top:14px"></div>
+  </div>
+</div>
+<div id="tip"></div>
+<footer>数据源: ActivityWatch 窗口事件 · pi / claude-code 会话 · git · GitHub · 飞书。"前台"= 窗口事件时长(含短暂空闲);"终端·其他"= 无法从标题归属项目的终端时间。点击柱子或热力图行可进入单日详情。</footer>
+
+<script>
+const D = __DATA__;
+const byD = {}; D.forEach((d, i) => byD[d.date] = i);
+
+/* ---------------- utils ---------------- */
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+  return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+function fmtHm(sec) { sec = Math.round(sec); const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60);
+  return h ? h + "h" + String(m).padStart(2, "0") + "m" : m + "m"; }
+function fmtTok(n) { if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + "K"; return String(n); }
+function dShort(d) { return d.slice(5); }
+function hhmm2min(s) { const p = String(s).split(":"); return (+p[0]) * 60 + (+p[1]); }
+function sTok(s) { return Object.values(s.tok || {}).reduce(function (a, t) { return a + t.in + t.out; }, 0); }
+function sTokCache(s) { return Object.values(s.tok || {}).reduce(function (a, t) { return a + t.cache_r; }, 0); }
+
+const PAL = ["#2563eb", "#ea580c", "#16a34a", "#9333ea", "#0891b2", "#ca8a04",
+             "#dc2626", "#0d9488", "#7c3aed", "#db2777", "#65a30d", "#475569"];
+const GRAYS = ["#94a3b8", "#cbd5e1", "#64748b"];
+const CATS = new Set(["终端·其他", "网页浏览", "个人事务", "系统", "文件管理", "文本编辑",
+                      "文献阅读", "其他", "(unknown)", "PyCharm"]);
+function hash(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+function bcolor(n) { if (CATS.has(n)) return GRAYS[hash(n) % GRAYS.length]; return PAL[hash(n) % PAL.length]; }
+const AGENTC = { "pi": "#2563eb", "claude-code": "#ea580c" };
+const APP_PRETTY = { "com.mitchellh.ghostty": "终端", "google-chrome": "Chrome",
+  "org.gnome.texteditor": "文本编辑", "org.gnome.nautilus": "文件", "jetbrains-pycharm": "PyCharm",
+  "org.gnome.ptyxis": "终端", "zotero": "Zotero", "warp-taskbar": "系统" };
+function appP(a) { return APP_PRETTY[String(a).toLowerCase()] || a; }
+
+const tip = document.getElementById("tip");
+function tipShow(html, ev) { tip.innerHTML = html; tip.style.display = "block"; tipMove(ev); }
+function tipMove(ev) { const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = ev.clientX + 14, y = ev.clientY + 16;
+  if (x + w > window.innerWidth - 8) x = Math.max(8, ev.clientX - w - 12);
+  if (y + h > window.innerHeight - 8) y = Math.max(8, ev.clientY - h - 12);
+  tip.style.left = x + "px"; tip.style.top = y + "px"; }
+function tipHide() { tip.style.display = "none"; }
+function bindTip(el, htmlFn) {
+  el.addEventListener("mouseenter", function (e) { tipShow(htmlFn(), e); });
+  el.addEventListener("mousemove", tipMove);
+  el.addEventListener("mouseleave", tipHide);
+}
+
+/* ---------------- svg helpers ---------------- */
+const NS = "http://www.w3.org/2000/svg";
+function SV(tag, attrs, parent) { const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+function SVt(parent, x, y, text, cls) { const e = SV("text", { x: x, y: y }, parent);
+  if (cls) e.setAttribute("class", cls); e.textContent = text; return e; }
+function mkSvg(c, W, H) { return SV("svg", { viewBox: "0 0 " + W + " " + H, class: "chart" }, c); }
+function card(parent, title, span) { const c = document.createElement("div");
+  c.className = "card" + (span ? " w2" : ""); c.innerHTML = "<h3>" + esc(title) + "</h3>";
+  parent.appendChild(c); return c; }
+function legend(c, items) { const l = document.createElement("div"); l.className = "legend";
+  items.forEach(function (it) { const s = document.createElement("span"); s.className = "leg";
+    s.innerHTML = '<i class="dot" style="background:' + it[1] + '"></i>' + esc(it[0]); l.appendChild(s); });
+  c.appendChild(l); return l; }
+
+/* ---------------- aggregates ---------------- */
+let projTotals = {}, modelTotals = {}, projModels = {};
+D.forEach(function (d) {
+  Object.keys(d.aw.projects).forEach(function (p) { projTotals[p] = (projTotals[p] || 0) + d.aw.projects[p]; });
+  d.sessions.forEach(function (s) {
+    Object.keys(s.tok || {}).forEach(function (m) {
+      const t = s.tok[m], mt = modelTotals[m] || (modelTotals[m] = { in: 0, out: 0, cr: 0, cw: 0, msgs: 0 });
+      mt.in += t.in; mt.out += t.out; mt.cr += t.cache_r; mt.cw += t.cache_w; mt.msgs += t.msgs;
+    });
+  });
+});
+const projOrder = Object.keys(projTotals).map(function (k) { return [k, projTotals[k]]; })
+  .sort(function (a, b) { return b[1] - a[1]; });
+const stackTop = projOrder.slice(0, 7).map(function (x) { return x[0]; });
+function stackVal(d, p) { return (d.aw.projects[p] || 0) / 3600; }
+function stackRest(d) { let s = 0; Object.keys(d.aw.projects).forEach(function (p) {
+  if (stackTop.indexOf(p) < 0) s += d.aw.projects[p]; }); return s / 3600; }
+const modelOrder = Object.keys(modelTotals).map(function (k) { return [k, modelTotals[k]]; })
+  .sort(function (a, b) { return (b[1].in + b[1].out + b[1].cr) - (a[0] ? a[1].in + a[1].out + a[1].cr : 0); });
+const tokTop = modelOrder.slice(0, 6).map(function (x) { return x[0]; });
+const tokColors = {}; tokTop.forEach(function (m, i) { tokColors[m] = PAL[i]; });
+
+function dayWin(d) { let s = 0; Object.keys(d.aw.projects).forEach(function (p) { s += d.aw.projects[p]; }); return s; }
+function dTokens(d, cache) { let s = 0; d.sessions.forEach(function (x) {
+  s += cache ? sTokCache(x) : sTok(x); }); return s; }
+function totalTok(cache) { let s = 0; D.forEach(function (d) { s += dTokens(d, cache); }); return s; }
+
+/* ---------------- tabs ---------------- */
+let cur = D.length - 1;
+const ovEl = document.getElementById("ov"), dvEl = document.getElementById("dv"),
+      ovK = document.getElementById("ovKpis");
+function showTab(which) {
+  const ov = which === "ov";
+  document.getElementById("tabOv").classList.toggle("on", ov);
+  document.getElementById("tabDay").classList.toggle("on", !ov);
+  ovK.hidden = !ov; ovEl.hidden = !ov; dvEl.hidden = ov;
+}
+document.getElementById("tabOv").onclick = function () { showTab("ov"); };
+document.getElementById("tabDay").onclick = function () { showTab("day"); };
+function gotoDay(i) { if (i < 0 || i >= D.length) return; cur = i;
+  showTab("day"); renderDay(); }
+
+/* ================= overview ================= */
+function kpi(parent, v, l) { const k = document.createElement("div"); k.className = "kpi";
+  k.innerHTML = '<div class="v">' + v + '</div><div class="l">' + esc(l) + "</div>"; parent.appendChild(k); }
+function buildKpis() {
+  const p = document.getElementById("ovKpis");
+  const win = projOrder.reduce(function (a, x) { return a + x[1]; }, 0);
+  const nz = D.filter(function (d) { return dayWin(d) > 0; }).length || 1;
+  const sessions = D.reduce(function (a, d) { return a + d.sessions.length; }, 0);
+  const msgs = D.reduce(function (a, d) { return a + d.sessions.reduce(function (b, s) { return b + s.u + s.a; }, 0); }, 0);
+  const commits = D.reduce(function (a, d) { return a + d.commits.reduce(function (b, r) { return b + r.n; }, 0); }, 0);
+  const prs = D.reduce(function (a, d) { return a + d.gh.prc; }, 0);
+  const fmsgs = D.reduce(function (a, d) { return a + d.fs.n; }, 0);
+  const tIn = Object.keys(modelTotals).reduce(function (a, m) { return a + modelTotals[m].in; }, 0);
+  const tCr = Object.keys(modelTotals).reduce(function (a, m) { return a + modelTotals[m].cr; }, 0);
+  const hit = tIn + tCr > 0 ? Math.round(100 * tCr / (tIn + tCr)) : 0;
+  kpi(p, fmtHm(win), "总前台时长");
+  kpi(p, fmtHm(win / nz), "日均前台(有数据天)");
+  kpi(p, String(sessions), "agent 会话");
+  kpi(p, fmtTok(totalTok(false)) + " / " + fmtTok(totalTok(true)), "token (生成+输入 / 缓存读)");
+  kpi(p, hit + "%", "缓存命中率");
+  kpi(p, String(msgs), "会话消息数");
+  kpi(p, String(commits) + " / " + String(prs), "commits / PR");
+  kpi(p, String(fmsgs), "飞书消息");
+}
+
+const CW = 900, CH = 230, ML = 46, MR = 12, MT = 14, MB = 34;
+function frame(svg, max, unit) {
+  for (let i = 0; i <= 4; i++) {
+    const v = max * i / 4, y = MT + (CH - MT - MB) * (1 - v / max);
+    SV("line", { x1: ML, x2: CW - MR, y1: y, y2: y, class: "gridline" }, svg);
+    SVt(svg, ML - 6, y + 4, v >= 10 ? v.toFixed(0) : v.toFixed(1), "ax axr");
+  }
+  SVt(svg, 4, 12, unit, "ax");
+}
+function xLabels(svg) {
+  const step = D.length > 10 ? 2 : 1;
+  D.forEach(function (d, i) {
+    if (i % step === 0) SVt(svg, ML + (CW - ML - MR) * (i + 0.5) / D.length, CH - 10, dShort(d.date), "ax axc");
+  });
+}
+function slotX(i) { const w = (CW - ML - MR) / D.length; return ML + i * w; }
+
+function chartActive() {
+  const c = card(ovEl, "每日电脑使用时长(前台)", true);
+  const svg = mkSvg(c, CW, CH);
+  const vals = D.map(dayWin);
+  const max = Math.max(1, Math.ceil(Math.max.apply(null, vals) / 3600)) * 3600;
+  frame(svg, max / 3600, "h");
+  const nz = vals.filter(function (v) { return v > 0; });
+  const mean = nz.length ? nz.reduce(function (a, b) { return a + b; }, 0) / nz.length : 0;
+  const my = MT + (CH - MT - MB) * (1 - mean / max);
+  const bw = (CW - ML - MR) / D.length - 6;
+  vals.forEach(function (v, i) {
+    const h = (CH - MT - MB) * v / max, x = slotX(i) + 3;
+    const r = SV("rect", { x: x, y: CH - MB - h, width: Math.max(2, bw), height: Math.max(0, h),
+      rx: 3, fill: "#2563eb", class: "bar" }, svg);
+    (function (i) { bindTip(r, function () {
+      const d = D[i], top = Object.keys(d.aw.projects).sort(function (a, b) { return d.aw.projects[b] - d.aw.projects[a]; }).slice(0, 3)
+        .map(function (p) { return esc(p) + " " + fmtHm(d.aw.projects[p]); });
+      return "<b>" + d.date + "</b><br>前台 " + fmtHm(dayWin(d)) + " · 非空闲 " + fmtHm(d.aw.active) +
+        "<br>" + (top.length ? top.join("<br>") : "无窗口数据") +
+        "<br>会话 " + d.sessions.length + " · commits " + d.commits.reduce(function (a, r) { return a + r.n; }, 0);
+    }); r.addEventListener("click", function () { gotoDay(i); }); })(i);
+  });
+  if (mean > 0) { SV("line", { x1: ML, x2: CW - MR, y1: my, y2: my, stroke: "#f59e0b",
+    "stroke-width": 1.5, "stroke-dasharray": "5 4" }, svg);
+    SVt(svg, CW - MR - 2, my - 5, "均值 " + fmtHm(mean), "ax"); }
+  xLabels(svg);
+}
+
+function chartStack() {
+  const c = card(ovEl, "每日时间构成(按项目)", true);
+  const items = stackTop.map(function (p) { return [p, bcolor(p)]; }).concat([["其他/杂项", "#94a3b8"]]);
+  legend(c, items);
+  const svg = mkSvg(c, CW, CH);
+  const totals = D.map(function (d) {
+    return stackTop.reduce(function (a, p) { return a + stackVal(d, p); }, 0) + stackRest(d); });
+  const max = Math.max(1, Math.ceil(Math.max.apply(null, totals)) + 0.5);
+  frame(svg, max, "h");
+  const bw = (CW - ML - MR) / D.length - 6;
+  D.forEach(function (d, i) {
+    let y = CH - MB, x = slotX(i) + 3;
+    const rows = stackTop.map(function (p) { return [p, stackVal(d, p)]; })
+      .concat([["其他/杂项", stackRest(d)]]);
+    rows.forEach(function (rw) {
+      if (rw[1] <= 0.005) return;
+      const h = (CH - MT - MB) * rw[1] / max;
+      y -= h;
+      const r = SV("rect", { x: x, y: y, width: Math.max(2, bw), height: Math.max(0, h),
+        fill: bcolor(rw[0]), class: "bar" }, svg);
+      (function (d, rw) { bindTip(r, function () {
+        return "<b>" + d.date + " · " + esc(rw[0]) + "</b><br>" + fmtHm(rw[1] * 3600); }); })(d, rw);
+    });
+    const hit = svg.lastChild;
+    (function (i) { if (hit) { hit.addEventListener("click", function () { gotoDay(i); }); } })(i);
+  });
+  xLabels(svg);
+}
+
+function chartHeat() {
+  const rh = 17, gap = 3, T = 8, L = 46, R = 8;
+  const W = 920, H = T + D.length * (rh + gap) + 24;
+  const c = card(ovEl, "时段热力图(小时 × 日期, 颜色 = 前台分钟)", true);
+  const svg = mkSvg(c, W, H);
+  const cw = (W - L - R) / 24;
+  const HC = ["#f8fafc", "#e2e8f0", "#bfdbfe", "#93c5fd", "#60a5fa", "#2563eb", "#1e40af"];
+  function hcol(min) { return min <= 0 ? HC[0] : min < 5 ? HC[1] : min < 15 ? HC[2] :
+    min < 30 ? HC[3] : min < 45 ? HC[4] : min < 55 ? HC[5] : HC[6]; }
+  for (let hh = 0; hh < 24; hh += 3) SVt(svg, L + cw * (hh + 0.5), H - 8,
+    String(hh).padStart(2, "0"), "ax axc");
+  D.forEach(function (d, i) {
+    const y = T + i * (rh + gap);
+    const t = SVt(svg, L - 6, y + 12, dShort(d.date), "ax axr");
+    t.style.cursor = "pointer"; t.addEventListener("click", function () { gotoDay(i); });
+    for (let hh = 0; hh < 24; hh++) {
+      const key = String(hh).padStart(2, "0");
+      const h = d.aw.hours[key];
+      let mins = 0, topP = "", topA = "", ttl = "";
+      if (h) {
+        mins = Math.min(60, Math.round(Object.keys(h.a).reduce(function (a, k) { return a + h.a[k]; }, 0) / 60));
+        const ps = Object.keys(h.p).sort(function (a, b) { return h.p[b] - h.p[a]; });
+        topP = ps.length ? ps[0] + " " + Math.round(h.p[ps[0]] / 60) + "m" : "";
+        const as = Object.keys(h.a).sort(function (a, b) { return h.a[b] - h.a[a]; });
+        topA = as.length ? appP(as[0]) : "";
+        ttl = (h.t[0] ? h.t[0].t : "").slice(0, 70);
+      }
+      const r = SV("rect", { x: L + cw * hh + 0.5, y: y, width: cw - 1.5, height: rh,
+        rx: 2, fill: hcol(mins), class: "bar" }, svg);
+      (function (d, hh, mins, topP, topA, ttl) { bindTip(r, function () {
+        return "<b>" + d.date + " " + String(hh).padStart(2, "0") + ":00–" + String(hh + 1).padStart(2, "0") + ":00</b><br>前台 " + mins + "m" +
+          (topP ? "<br>主要: " + esc(topP) : "") + (topA ? " · " + esc(topA) : "") +
+          (ttl ? "<br>标题: " + esc(ttl) : "<br><span class='mut'>无窗口数据</span>");
+      }); r.addEventListener("click", function () { gotoDay(byD[d.date]); }); })(d, hh, mins, topP, topA, ttl);
+    }
+  });
+}
+
+function chartDonut() {
+  const c = card(ovEl, "项目时长占比(全周期)");
+  const row = document.createElement("div"); row.style.cssText = "display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap";
+  c.appendChild(row);
+  const top = projOrder.slice(0, 9);
+  let rest = 0; projOrder.slice(9).forEach(function (x) { rest += x[1]; });
+  const items = top.map(function (x) { return { l: x[0], v: x[1], c: bcolor(x[0]) }; });
+  if (rest > 0) items.push({ l: "其余", v: rest, c: "#cbd5e1" });
+  const tot = items.reduce(function (a, x) { return a + x.v; }, 0) || 1;
+  const svg = mkSvg(row, 300, 300), cx = 150, cy = 150, r1 = 130, r0 = 84;
+  let a0 = -Math.PI / 2;
+  items.forEach(function (it) {
+    const a1 = a0 + 2 * Math.PI * it.v / tot;
+    const p = "M" + (cx + r1 * Math.cos(a0)) + "," + (cy + r1 * Math.sin(a0)) +
+      " A" + r1 + "," + r1 + " 0 " + (a1 - a0 > Math.PI ? 1 : 0) + " 1 " + (cx + r1 * Math.cos(a1)) + "," + (cy + r1 * Math.sin(a1)) +
+      " L" + (cx + r0 * Math.cos(a1)) + "," + (cy + r0 * Math.sin(a1)) +
+      " A" + r0 + "," + r0 + " 0 " + (a1 - a0 > Math.PI ? 1 : 0) + " 0 " + (cx + r0 * Math.cos(a0)) + "," + (cy + r0 * Math.sin(a0)) + " Z";
+    const path = SV("path", { d: p, fill: it.c, stroke: "#fff", "stroke-width": 1.5 }, svg);
+    bindTip(path, function () { return "<b>" + esc(it.l) + "</b><br>" + fmtHm(it.v) +
+      " · " + (100 * it.v / tot).toFixed(1) + "%"; });
+    a0 = a1;
+  });
+  SVt(svg, cx, cy - 2, fmtHm(tot), "").setAttribute("text-anchor", "middle");
+  SVt(svg, cx, cy + 16, "总前台", "axc");
+  const lg = document.createElement("div"); lg.className = "list"; lg.style.cssText = "flex:1;min-width:210px";
+  items.forEach(function (it) {
+    const row = document.createElement("div");
+    row.innerHTML = '<i class="dot" style="background:' + it.c + '"></i> ' + esc(it.l) +
+      " <span class='mut'>" + fmtHm(it.v) + " · " + (100 * it.v / tot).toFixed(0) + "%</span>";
+    row.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:3px";
+    lg.appendChild(row);
+  });
+  row.appendChild(lg);
+}
+
+function chartTokens() {
+  const c = card(ovEl, "每日 token 消耗(输入+生成, 不含缓存)", true);
+  legend(c, tokTop.map(function (m) { return [m + " (" + fmtTok(modelTotals[m].in + modelTotals[m].out) + ")", tokColors[m]]; }));
+  const svg = mkSvg(c, CW, CH);
+  const per = D.map(function (d) {
+    const o = {}; d.sessions.forEach(function (s) {
+      Object.keys(s.tok || {}).forEach(function (m) { o[m] = (o[m] || 0) + s.tok[m].in + s.tok[m].out; }); });
+    return o; });
+  const totals = per.map(function (o) { return Object.keys(o).reduce(function (a, m) { return a + o[m]; }, 0); });
+  const max = Math.max(1000, Math.max.apply(null, totals) * 1.15);
+  frame(svg, max / 1000, "K");
+  const bw = (CW - ML - MR) / D.length - 6;
+  per.forEach(function (o, i) {
+    let y = CH - MB, x = slotX(i) + 3;
+    tokTop.forEach(function (m) {
+      const v = o[m] || 0; if (v <= 0) return;
+      const h = (CH - MT - MB) * v / max; y -= h;
+      const r = SV("rect", { x: x, y: y, width: Math.max(2, bw), height: h, fill: tokColors[m], class: "bar" }, svg);
+      (function (d, m, v) { bindTip(r, function () {
+        let cr = 0; d.sessions.forEach(function (s) { if (s.tok[m]) cr += s.tok[m].cache_r; });
+        return "<b>" + d.date + " · " + esc(m) + "</b><br>in/out " + fmtTok(v) + " · 缓存读 " + fmtTok(cr);
+      }); })(D[i], m, v);
+    });
+  });
+  xLabels(svg);
+}
+
+function chartSessions() {
+  const c = card(ovEl, "每日 AI 助手会话数");
+  const svg = mkSvg(c, CW, CH);
+  const per = D.map(function (d) {
+    const o = { "pi": 0, "claude-code": 0 };
+    d.sessions.forEach(function (s) { o[s.g] = (o[s.g] || 0) + 1; }); return o; });
+  const max = Math.max(4, Math.max.apply(null, per.map(function (o) { return o.pi + o["claude-code"]; })) * 1.2);
+  frame(svg, max, "个");
+  const bw = (CW - ML - MR) / D.length - 6;
+  per.forEach(function (o, i) {
+    let y = CH - MB, x = slotX(i) + 3;
+    [["pi"], ["claude-code"]].forEach(function (g) {
+      const v = o[g[0]]; if (v <= 0) return;
+      const h = (CH - MT - MB) * v / max; y -= h;
+      const r = SV("rect", { x: x, y: y, width: Math.max(2, bw), height: h, fill: AGENTC[g[0]], class: "bar" }, svg);
+      (function (d, g, v) { bindTip(r, function () {
+        const ss = d.sessions.filter(function (s) { return s.g === g; });
+        const msgs = ss.reduce(function (a, s) { return a + s.u + s.a; }, 0);
+        const tok = ss.reduce(function (a, s) { return a + sTok(s); }, 0);
+        return "<b>" + d.date + " · " + g + "</b><br>会话 " + v + " · 消息 " + msgs + " · token " + fmtTok(tok); });
+      })(D[i], g[0], v);
+    });
+  });
+  xLabels(svg);
+}
+
+function chartOutput() {
+  const c = card(ovEl, "每日工程产出");
+  const svg = mkSvg(c, CW, CH);
+  legend(c, [["commits", "#16a34a"], ["PR 创建", "#9333ea"], ["review/评论", "#0891b2"]]);
+  const per = D.map(function (d) {
+    return [d.commits.reduce(function (a, r) { return a + r.n; }, 0), d.gh.prc, d.gh.rv + d.gh.cm]; });
+  const max = Math.max(4, Math.max.apply(null, per.map(function (p) { return Math.max(p[0], p[1], p[2]); })) * 1.25);
+  frame(svg, max, "个");
+  const gw = (CW - ML - MR) / D.length, bw = Math.max(2, gw / 3 - 5);
+  per.forEach(function (p, i) {
+    [["#16a34a", 0], ["#9333ea", 1], ["#0891b2", 2]].forEach(function (s) {
+      const v = p[s[1]]; if (v <= 0) return;
+      const h = (CH - MT - MB) * v / max, x = slotX(i) + 3 + s[1] * (bw + 3);
+      const r = SV("rect", { x: x, y: CH - MB - h, width: bw, height: h, rx: 2, fill: s[0], class: "bar" }, svg);
+      (function (d, lab, v) { bindTip(r, function () {
+        return "<b>" + d.date + "</b><br>" + lab + ": " + v; }); })(D[i], ["commits", "PR 创建", "review/评论"][s[1]], v);
+    });
+  });
+  xLabels(svg);
+}
+
+/* ================= day view ================= */
+const dvGrid = document.getElementById("dvGrid"), dvCols = document.getElementById("dvCols");
+function renderDay() {
+  const d = D[cur];
+  document.getElementById("dTitle").textContent = d.date + " 周" + "日一二三四五六"[new Date(d.date + "T12:00:00").getDay()];
+  const sel = document.getElementById("dSel");
+  sel.innerHTML = ""; D.forEach(function (x, i) {
+    const o = document.createElement("option"); o.value = i; o.textContent = x.date; if (i === cur) o.selected = true;
+    sel.appendChild(o); });
+  const p = document.getElementById("dvKpis");
+  p.innerHTML = "";
+  const tok = dTokens(d, false), cr = dTokens(d, true);
+  kpi(p, fmtHm(d.aw.active), "非空闲活跃");
+  kpi(p, fmtHm(dayWin(d)), "前台时长");
+  kpi(p, String(d.sessions.length), "agent 会话");
+  kpi(p, fmtTok(tok) + (cr ? " / " + fmtTok(cr) : ""), "token (生成+输入 / 缓存)");
+  kpi(p, String(d.sessions.reduce(function (a, s) { return a + s.u; }, 0) + "/" +
+    d.sessions.reduce(function (a, s) { return a + s.a; }, 0)), "用户/助手消息");
+  kpi(p, String(d.commits.reduce(function (a, r) { return a + r.n; }, 0)) + " commits · " +
+    d.gh.prc + " PR", "代码产出");
+  kpi(p, String(d.fs.n) + " (我发 " + d.fs.me + ")", "飞书消息");
+  kpi(p, String((d.fs.files || []).length), "飞书文件");
+  dvGrid.innerHTML = ""; dvCols.innerHTML = "";
+  dayTimeline(d); hourTable(d); sessionTable(d); dayLists(d);
+}
+document.getElementById("dPrev").onclick = function () { gotoDay(cur - 1); };
+document.getElementById("dNext").onclick = function () { gotoDay(cur + 1); };
+document.getElementById("dSel").onchange = function () { gotoDay(+this.value); };
+
+function dayTimeline(d) {
+  const c = card(dvGrid, "24 小时时间线", true);
+  const W = 940, L = 46, R = 8, plotW = W - L - R;
+  const lanes = [];
+  const sess = d.sessions.map(function (s) { return { s: s, a: hhmm2min(s.t0), b: hhmm2min(s.t1) }; })
+    .sort(function (x, y) { return x.a - y.a; });
+  sess.forEach(function (e) {
+    let ln = lanes.findIndex(function (l) { return l <= e.a; });
+    if (ln < 0) { lanes.push(0); ln = lanes.length - 1; }
+    lanes[ln] = e.b;
+    e.lane = ln;
+  });
+  const nl = Math.max(1, lanes.length);
+  const yA = 24, hA = 24, yB = yA + hA + 18, hB = nl * 8, yC = yB + hB + 18, hC = 14;
+  const H = yC + hC + 26;
+  const svg = mkSvg(c, W, H);
+  SVt(svg, L - 6, yA + hA / 2 + 4, "前台", "ax axr");
+  SVt(svg, L - 6, yB + hB / 2 + 4, "会话", "ax axr");
+  SVt(svg, L - 6, yC + hC / 2 + 4, "事件", "ax axr");
+  const hw = plotW / 24;
+  for (let hh = 0; hh < 24; hh++) {
+    SV("rect", { x: L + hh * hw, y: yA, width: hw - 1, height: hA, fill: "#f1f5f9", rx: 2 }, svg);
+    const key = String(hh).padStart(2, "0"), h = d.aw.hours[key];
+    if (!h) continue;
+    let x = L + hh * hw;
+    const ps = Object.keys(h.p).filter(function (p) { return h.p[p] >= 30; })
+      .sort(function (a, b) { return h.p[b] - h.p[a]; });
+    ps.forEach(function (pn) {
+      const seg = hw * (Math.min(3600, h.p[pn]) / 3600);
+      const r = SV("rect", { x: x, y: yA, width: Math.max(0, Math.min(seg, L + (hh + 1) * hw - x)),
+        height: hA, fill: bcolor(pn) }, svg);
+      (function (hh, pn, v, h) { bindTip(r, function () {
+        const tt = h.t.slice(0, 2).map(function (x) { return esc(x.t.slice(0, 60)) + " (" + fmtHm(x.d) + ")"; });
+        return "<b>" + String(hh).padStart(2, "0") + ":00–" + String(hh + 1).padStart(2, "0") + ":00 · " + esc(pn) + "</b><br>" +
+          fmtHm(v) + (tt.length ? "<br>" + tt.join("<br>") : "");
+      }); })(hh, pn, h.p[pn], h);
+      x += Math.min(seg, hw);
+    });
+  }
+  sess.forEach(function (e) {
+    const x0 = L + plotW * e.a / 1440, x1 = Math.max(x0 + 3, L + plotW * e.b / 1440);
+    const y = yB + e.lane * 8;
+    const r = SV("rect", { x: x0, y: y, width: Math.min(x1 - x0, plotW), height: 6, rx: 3, fill: AGENTC[e.s.g] || "#64748b" }, svg);
+    bindTip(r, function () {
+      const models = Object.keys(e.s.tok || {}).map(function (m) {
+        return esc(m) + ": " + fmtTok(e.s.tok[m].in + e.s.tok[m].out); });
+      return "<b>[" + e.s.g + "] " + esc(e.s.p) + " " + e.s.t0 + "–" + e.s.t1 + "</b><br>" +
+        esc(e.s.k || "(无任务记录)") + "<br>消息 " + e.s.u + "/" + e.s.a + " · token " + fmtTok(sTok(e.s)) +
+        (models.length ? "<br>" + models.join(" · ") : "");
+    });
+  });
+  const evts = [];
+  (d.fs.chats || []).forEach(function (ch) { (ch.ex || []).forEach(function (e) {
+    evts.push({ t: hhmm2min(e.h + ":" + e.m), c: "#db2777", tip: "飞书 " + ch.c + " · " + e.w + ": " + e.x }); }); });
+  (d.gh.cmv || []).forEach(function (x) { evts.push({ t: hhmm2min(x.slice(0, 5)), c: "#9333ea", tip: "GitHub 评论: " + x.slice(6) }); });
+  (d.commits || []).forEach(function (r) { (r.ts || []).forEach(function (t) {
+    evts.push({ t: hhmm2min(t), c: "#16a34a", tip: "commit " + r.r }); }); });
+  evts.sort(function (a, b) { return a.t - b.t; });
+  let lastX = -99, row = 0;
+  evts.forEach(function (e) {
+    const x = L + plotW * e.t / 1440;
+    if (x - lastX < 7) row = 1 - row; else row = 0;
+    lastX = x;
+    const r = SV("circle", { cx: x, cy: yC + 4 + row * 6, r: 4, fill: e.c, stroke: "#fff", "stroke-width": 1 }, svg);
+    bindTip(r, function () { return "<b>" + String(Math.floor(e.t / 60)).padStart(2, "0") + ":" +
+      String(e.t % 60).padStart(2, "0") + "</b><br>" + esc(e.tip); });
+  });
+  for (let hh = 0; hh < 24; hh += 3) SVt(svg, L + hw * (hh + 0.5), H - 8, String(hh).padStart(2, "0"), "ax axc");
+}
+
+function hourTable(d) {
+  const c = card(dvGrid, "小时明细");
+  const keys = Object.keys(d.aw.hours).sort();
+  if (!keys.length) { c.insertAdjacentHTML("beforeend", "<div class='mut sm'>当天无 ActivityWatch 窗口数据。</div>"); return; }
+  const tb = document.createElement("table"); tb.className = "day";
+  tb.innerHTML = "<tr><th>时段</th><th>前台</th><th>项目</th><th>主要内容</th></tr>";
+  keys.forEach(function (hh) {
+    const h = d.aw.hours[hh];
+    const mins = Object.keys(h.a).reduce(function (a, k) { return a + h.a[k]; }, 0) / 60;
+    const ps = Object.keys(h.p).filter(function (p) { return h.p[p] >= 30; })
+      .sort(function (a, b) { return h.p[b] - h.p[a]; }).slice(0, 4);
+    const chips = ps.map(function (p) {
+      return '<span class="chip"><i class="dot" style="background:' + bcolor(p) + '"></i>' +
+        esc(p) + " " + Math.round(h.p[p] / 60) + "m</span>"; }).join("");
+    const tt = h.t.slice(0, 2).map(function (x) { return esc(x.t.slice(0, 55)) + " <span class='mut'>(" + fmtHm(x.d) + ")</span>"; }).join("<br>");
+    tb.insertAdjacentHTML("beforeend", "<tr><td>" + hh + ":00</td><td>" + Math.round(mins) + "m</td><td><div class='chips'>" +
+      chips + "</div></td><td class='sm'>" + (tt || "—") + "</td></tr>");
+  });
+  c.appendChild(tb);
+}
+
+function sessionTable(d) {
+  const c = card(dvGrid, "AI 助手会话(" + d.sessions.length + ")");
+  if (!d.sessions.length) { c.insertAdjacentHTML("beforeend", "<div class='mut sm'>无。</div>"); return; }
+  const tb = document.createElement("table"); tb.className = "day";
+  tb.innerHTML = "<tr><th>时段</th><th>助手</th><th>项目</th><th>任务</th><th>消息</th><th>token</th><th>工具</th></tr>";
+  d.sessions.forEach(function (s) {
+    const tok = Object.keys(s.tok || {}).sort(function (a, b) {
+      return (s.tok[b].in + s.tok[b].out) - (s.tok[a].in + s.tok[a].out); });
+    const tokStr = tok.length ? fmtTok(sTok(s)) + (sTokCache(s) ? " <span class='mut'>(" + fmtTok(sTokCache(s)) + " cache)</span>" : "") : "—";
+    tb.insertAdjacentHTML("beforeend", "<tr><td>" + s.t0 + "–" + s.t1 + "</td><td>" + (s.g === "pi" ? "🔵 pi" : "🟠 claude") +
+      "</td><td>" + esc(s.p) + "</td><td class='sm'>" + esc(s.k || "—") + "</td><td>" + s.u + "/" + s.a +
+      "</td><td>" + tokStr + "</td><td class='sm'>" + (s.tl.map(function (t) { return esc(t[0]) + "×" + t[1]; }).join(", ") || "—") + "</td></tr>");
+  });
+  c.appendChild(tb);
+}
+
+function dayLists(d) {
+  function col(title, html) { const c = document.createElement("div"); c.className = "card";
+    c.innerHTML = "<h3>" + esc(title) + "</h3><div class='list'>" + (html || "<span class='mut'>无</span>") + "</div>";
+    dvCols.appendChild(c); }
+  let commits = "";
+  (d.commits || []).forEach(function (r) {
+    commits += "<div><b>" + esc(r.r) + "</b> (" + r.n + ")</div><ul>" +
+      r.subj.map(function (s) { return "<li class='sm'>" + esc(s) + "</li>"; }).join("") + "</ul>"; });
+  let gh = "";
+  (d.gh.pr || []).forEach(function (p) {
+    gh += "<div class='sm'>🔶 " + esc(p.t) + " <span class='mut'>[" + esc(p.s) + "]</span></div>"; });
+  (d.gh.cmv || []).forEach(function (x) { gh += "<div class='sm'>💬 " + esc(x) + "</div>"; });
+  let fs = "";
+  (d.fs.chats || []).forEach(function (ch) {
+    fs += "<div><b>" + esc(ch.c) + "</b> <span class='mut'>" + ch.n + " 条 / 我发 " + ch.me + "</span></div><ul>" +
+      (ch.ex || []).map(function (e) { return "<li class='sm'>" + e.h + ":" + e.m + " <b>" + esc(e.w) + ":</b> " + esc(e.x) + "</li>"; }).join("") + "</ul>"; });
+  (d.fs.files || []).forEach(function (f) {
+    fs += "<div class='sm'>📎 " + (f.t ? f.t + " " : "") + esc(f.n) + " <span class='mut'>[" + esc(f.c) + "]</span></div>"; });
+  col("Git 提交", commits);
+  col("GitHub PR / 评论", gh);
+  col("飞书协作", fs);
+}
+
+/* ---------------- init ---------------- */
+buildKpis();
+chartActive(); chartStack(); chartHeat(); chartDonut(); chartTokens(); chartSessions(); chartOutput();
+renderDay();
+(function () {  // deep link: dashboard.html?day=2026-10-07
+  const m = /[?&]day=(\d{4}-\d{2}-\d{2})/.exec(location.search);
+  if (m && byD[m[1]] != null) gotoDay(byD[m[1]]);
+})();
+</script>
+</body>
+</html>

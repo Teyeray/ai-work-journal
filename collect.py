@@ -89,6 +89,75 @@ def http_json(url, headers=None, timeout=10):
 
 # ---------------------------------------------------------------- ActivityWatch
 
+# ---------------------------------------------------------------- project buckets
+
+# terminal title -> project name. built once per collect run.
+PROJ_FOLD = {"paperfacts-dev": "paperfacts", "paperfacts-fig": "paperfacts"}
+PROJ_SKIP = {"llm", "work", "tmp", "playground", "notes", "projects", "kaggle"}
+PROJ_ALIAS = {
+    "rsi": r"\brsi\b|memo ?harness|darwin godel|self-?improv|\bharness\b",
+    "casmi": r"\bcasmi\b|enveda|mass spectra",
+    "ai-work-journal": r"ai-?work-?journal|工作日志",
+}
+APP_CAT = {
+    "zotero": "文献阅读",
+    "google-chrome": "网页浏览",
+    "com.mitchellh.ghostty": "终端·其他",
+    "org.gnome.texteditor": "文本编辑",
+    "org.gnome.nautilus": "文件管理",
+    "org.gnome.ptyxis": "终端·其他",
+    "jetbrains-pycharm": "PyCharm",
+    "warp-taskbar": "系统",
+}
+
+
+def build_bucket_matchers():
+    """Scan project roots and compile title matchers. Returns [(regex, label)]."""
+    label_by_key = {}
+    dirs = []
+    for root in CFG.get("project_roots", []):
+        try:
+            for child in Path(root).iterdir():
+                if not child.is_dir() or child.name.startswith("."):
+                    continue
+                dirs.append((child.name.lower(), child.name))
+        except OSError:
+            pass
+    for key, name in sorted(dirs):
+        if key in PROJ_SKIP:
+            continue
+        fold = PROJ_FOLD.get(key, key)
+        if key == fold:
+            label_by_key[fold] = name
+        else:
+            label_by_key.setdefault(fold, fold)
+    for key in PROJ_ALIAS:
+        label_by_key.setdefault(key, key.upper() if len(key) < 5 else key)
+    matchers = []
+    for key, label in sorted(label_by_key.items()):
+        parts = [r"\b" + re.escape(key) + r"\b"]
+        if key in PROJ_ALIAS:
+            parts.append(PROJ_ALIAS[key])
+        matchers.append((re.compile("|".join(parts), re.I), label))
+    return matchers
+
+
+def bucket_for(app, title, matchers):
+    """Map one window event to a project or category label."""
+    if title:
+        t = title.lower()
+        if "滴答清单" in t or "ta-da" in t:
+            return "个人事务"
+        best, best_pos = None, 1 << 30
+        for rx, label in matchers:
+            m = rx.search(t)
+            if m and m.start() < best_pos:
+                best, best_pos = label, m.start()
+        if best:
+            return best
+    return APP_CAT.get(app.lower(), app)
+
+
 def collect_activitywatch(start, end):
     out = {"apps": [], "active_time": 0, "afk_time": 0}
     base = CFG["aw_url"].rstrip("/")
@@ -104,6 +173,11 @@ def collect_activitywatch(start, end):
     })
     # window events
     agg = {}
+    hour_apps = {}  # "HH" -> {app: dur}
+    hour_titles = {}  # "HH" -> {title: dur}
+    proj_agg = {}  # bucket -> dur (day total)
+    hour_proj = {}  # "HH" -> {bucket: dur}
+    matchers = build_bucket_matchers()
     try:
         evs = http_json(f"{base}/api/0/buckets/aw-watcher-window_{host}/events{q}")
         for e in evs:
@@ -114,6 +188,28 @@ def collect_activitywatch(start, end):
             a["dur"] += dur
             if title:
                 a["titles"][title] = a["titles"].get(title, 0) + dur
+            b = bucket_for(app, title, matchers)
+            proj_agg[b] = proj_agg.get(b, 0.0) + dur
+            # split the event across the local hours it spans
+            ts = parse_ts(e.get("timestamp"))
+            if ts is not None and dur > 0:
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=dt.timezone.utc)
+                t0, left = ts.astimezone(LOCAL_TZ), dur
+                while left > 0:
+                    hh = t0.replace(minute=0, second=0, microsecond=0)
+                    nxt = hh + dt.timedelta(hours=1)
+                    seg = min(left, (nxt - t0).total_seconds())
+                    key = f"{t0.hour:02d}"
+                    ha = hour_apps.setdefault(key, {})
+                    ha[app] = ha.get(app, 0.0) + seg
+                    pb = hour_proj.setdefault(key, {})
+                    pb[b] = pb.get(b, 0.0) + seg
+                    if title:
+                        ht = hour_titles.setdefault(key, {})
+                        ht[title] = ht.get(title, 0.0) + seg
+                    left -= seg
+                    t0 = nxt
     except Exception as e:
         return {"error": f"activitywatch window: {e}", **out}
     # afk events
@@ -135,6 +231,19 @@ def collect_activitywatch(start, end):
             "duration": round(a["dur"]),
             "titles": [{"title": t[:100], "duration": round(d)} for t, d in titles],
         })
+    # hourly view for the dashboard: top apps, titles and project buckets per hour
+    hour_out = {}
+    for key in sorted(hour_apps):
+        apps = sorted(hour_apps[key].items(), key=lambda kv: -kv[1])[:5]
+        tl = sorted(hour_titles.get(key, {}).items(), key=lambda kv: -kv[1])[:5]
+        pj = sorted(hour_proj.get(key, {}).items(), key=lambda kv: -kv[1])[:8]
+        hour_out[key] = {
+            "apps": {a: round(d) for a, d in apps},
+            "titles": [{"title": t[:100], "duration": round(d)} for t, d in tl],
+            "proj": {p: round(d) for p, d in pj},
+        }
+    out["hours"] = hour_out
+    out["projects"] = {p: round(v) for p, v in sorted(proj_agg.items(), key=lambda kv: -kv[1])[:20]}
     return out
 
 
@@ -160,6 +269,18 @@ def is_tool_result(content):
     if isinstance(content, list):
         return any(isinstance(p, dict) and p.get("type") == "tool_result" for p in content)
     return False
+
+
+def add_tokens(s, model, u):
+    """Accumulate per-model token usage on a session record."""
+    if not isinstance(u, dict) or not model:
+        return
+    t = s.setdefault("tokens", {}).setdefault(model, {"in": 0, "out": 0, "cache_r": 0, "cache_w": 0, "msgs": 0})
+    t["in"] += u.get("input_tokens", 0) or u.get("input", 0) or 0
+    t["out"] += u.get("output_tokens", 0) or u.get("output", 0) or 0
+    t["cache_r"] += u.get("cache_read_input_tokens", 0) or u.get("cacheRead", 0) or 0
+    t["cache_w"] += u.get("cache_creation_input_tokens", 0) or u.get("cacheWrite", 0) or 0
+    t["msgs"] += 1
 
 
 def collect_claude(start, end):
@@ -204,6 +325,7 @@ def collect_claude(start, end):
                     elif t == "assistant":
                         s["assistant_msgs"] += 1
                         msg = d.get("message") or {}
+                        add_tokens(s, msg.get("model"), msg.get("usage"))
                         content = msg.get("content")
                         if isinstance(content, list):
                             for part in content:
@@ -265,6 +387,7 @@ def collect_pi(start, end):
                                 s["task"] = txt
                         elif role == "assistant" and msg.get("content"):
                             s["assistant_msgs"] += 1
+                            add_tokens(s, msg.get("model"), msg.get("usage"))
         except OSError:
             continue
         if s["first"] is not None:
@@ -312,10 +435,85 @@ def collect_git(start, end):
     return repos
 
 
+# ---------------------------------------------------------------- github
+
+def gh_run(args, timeout=30):
+    gh = CFG.get("gh_bin", "gh")
+    try:
+        r = subprocess.run([gh, *args], capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    return r if r.returncode == 0 else None
+
+
+def collect_github(start, end):
+    """PR reviews/comments/creates/merges done by the user on github.com."""
+    out = {"reviews": [], "comments": [], "prs_created": [], "prs_merged": []}
+    r = gh_run(["auth", "status", "-h", "github.com"])
+    blob = ((r.stdout or "") + (r.stderr or "")) if r else ""
+    if "Logged in" not in blob:
+        return {"error": "gh 未登录,跳过 GitHub 采集", **out}
+
+    gql = (
+        "query($start:DateTime!,$end:DateTime!){viewer{login "
+        "contributionsCollection(from:$start,to:$end)"
+        "{pullRequestReviewContributions(first:50){nodes{occurredAt pullRequest{title url}}}} "
+        "issueComments(first:100,orderBy:{field:UPDATED_AT,direction:DESC})"
+        "{nodes{createdAt url body}}}}"
+    )
+    r = gh_run(["api", "graphql", "-f", f"query={gql}",
+                "-F", f"start={start.astimezone(dt.timezone.utc).isoformat()}",
+                "-F", f"end={end.astimezone(dt.timezone.utc).isoformat()}"])
+    if r:
+        try:
+            viewer = json.loads(r.stdout)["data"]["viewer"]
+        except (json.JSONDecodeError, KeyError):
+            viewer = {}
+        for n in viewer.get("contributionsCollection", {}).get("pullRequestReviewContributions", {}).get("nodes", []):
+            ts = parse_ts(n.get("occurredAt"))
+            if in_day(ts, start, end):
+                pr = n.get("pullRequest") or {}
+                out["reviews"].append({
+                    "time": ts.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                    "url": pr.get("url", ""), "state": "",
+                    "pr": pr.get("title", "")[:100]})
+        for n in viewer.get("issueComments", {}).get("nodes", []):
+            ts = parse_ts(n.get("createdAt"))
+            if in_day(ts, start, end):
+                body = re.sub(r"\s+", " ", (n.get("body") or "")).strip()
+                out["comments"].append({
+                    "time": ts.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                    "url": n.get("url", ""), "text": body[:120]})
+
+    d = start.date().isoformat()
+    for key, flags in (("prs_created", ["--author", "@me", "--created", d]),
+                       ("prs_merged", ["--merged-by", "@me", "--merged", d])):
+        r = gh_run(["search", "prs", *flags, "--limit", "30",
+                    "--json", "repository,title,url,state,author"])
+        if not r:
+            continue
+        try:
+            for n in json.loads(r.stdout):
+                out[key].append({
+                    "repo": (n.get("repository") or {}).get("nameWithOwner", ""),
+                    "title": n.get("title", "")[:100], "url": n.get("url", ""),
+                    "state": n.get("state", ""),
+                    "author": (n.get("author") or {}).get("login", "")})
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
 # ---------------------------------------------------------------- screenpipe
 
+def sp_hhmm(ts):
+    """ScreenPipe timestamp -> local HH:MM string, or ''."""
+    t = parse_ts(re.sub(r"\.\d+", "", ts or ""))
+    return f"{t.astimezone(LOCAL_TZ):%H:%M}" if t else ""
+
+
 def collect_screenpipe(start, end):
-    out = {"frames": 0, "devices": {}, "samples": []}
+    out = {"frames": 0, "total": 0, "unique": 0, "span": "", "devices": {}, "samples": []}
     tok_file = CFG.get("sp_token_file")
     headers = {}
     try:
@@ -324,16 +522,33 @@ def collect_screenpipe(start, end):
     except Exception:
         return {"error": "no screenpipe token", **out}
     base = CFG["sp_url"].rstrip("/")
-    q = "?" + urllib.parse.urlencode({
-        "query": " ", "limit": 500, "offset": 0,
-        "start_time": start.isoformat(), "end_time": end.isoformat(),
-    })
-    try:
-        d = http_json(f"{base}/search{q}", headers=headers, timeout=20)
-    except Exception as e:
-        return {"error": f"screenpipe: {e}", **out}
-    items = d.get("data") or []
+    limit = 500
+    offset = 0
+    total = 0
+    items = []
+    max_frames = CFG.get("sp_max_frames", 5000)
+    # 不带 content_type 时,服务端每页返回数约为 limit 的一半。必须显式指定。
+    # 单页拿不全,按 pagination.total 翻页。
+    while offset < max_frames:
+        q = "?" + urllib.parse.urlencode({
+            "query": " ", "limit": limit, "offset": offset,
+            "content_type": "ocr",
+            "start_time": start.isoformat(), "end_time": end.isoformat(),
+        })
+        try:
+            d = http_json(f"{base}/search{q}", headers=headers, timeout=20)
+        except Exception as e:
+            if not items:
+                return {"error": f"screenpipe: {e}", **out}
+            break
+        page = d.get("data") or []
+        items += page
+        offset += len(page)
+        total = (d.get("pagination") or {}).get("total") or 0
+        if not page or (total and offset >= total):
+            break
     out["frames"] = len(items)
+    out["total"] = total
     texts = []
     for it in items:
         c = it.get("content") or {}
@@ -343,8 +558,24 @@ def collect_screenpipe(start, end):
         if t:
             texts.append((c.get("timestamp") or "", t))
     texts.sort()
-    step = max(1, len(texts) // CFG.get("sp_samples", 8))
-    out["samples"] = [t[:220] for _, t in texts[::step]][: CFG.get("sp_samples", 8)]
+    # 全文去重。静止屏幕会重复采到相同文本。
+    seen = set()
+    uniq = []
+    for ts, t in texts:
+        key = re.sub(r"\s+", " ", t)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((ts, t))
+    out["unique"] = len(uniq)
+    if uniq:
+        first, last = sp_hhmm(uniq[0][0]), sp_hhmm(uniq[-1][0])
+        if first and last:
+            out["span"] = f"{first}-{last}"
+    n = CFG.get("sp_samples", 40)
+    chars = CFG.get("sp_sample_chars", 400)
+    step = max(1, len(uniq) // n)
+    out["samples"] = [t[:chars] for _, t in uniq[::step]][:n]
     return out
 
 
@@ -406,19 +637,44 @@ def write_digest(d, data):
                 lines.append(f"- {c['time']} {c['hash']} {c['subject']}")
     else:
         lines.append("- 无")
+    lines.append("")
+    lines.append("## 4. GitHub PR 活动")
+    gh = data.get("github") or {}
+    if gh.get("error"):
+        lines.append(f"- {gh['error']}")
+    else:
+        def gh_list(items, fmt):
+            for i in items[:20]:
+                lines.append(f"- {fmt(i)}")
+        if gh.get("reviews"):
+            lines.append("提交的 review:")
+            gh_list(gh["reviews"], lambda i: f"{i['time']} [{i['state']}] {i['pr']} {i['url']}")
+        if gh.get("comments"):
+            lines.append("评论:")
+            gh_list(gh["comments"], lambda i: f"{i['time']} {i['text']} {i['url']}")
+        if gh.get("prs_created"):
+            lines.append("创建的 PR:")
+            gh_list(gh["prs_created"], lambda i: f"{i['repo']} {i['title']} [{i['state']}] {i['url']}")
+        if gh.get("prs_merged"):
+            lines.append("合并的 PR:")
+            gh_list(gh["prs_merged"], lambda i: f"{i['repo']} {i['title']} (作者 {i['author']}) {i['url']}")
+        if not any(gh.get(k) for k in ("reviews", "comments", "prs_created", "prs_merged")):
+            lines.append("- 当天无 PR 活动")
     sp = data["screenpipe"]
     lines.append("")
-    lines.append("## 4. 屏幕 OCR 采样")
+    lines.append("## 5. 屏幕 OCR 采样")
     if sp.get("error"):
         lines.append(f"- {sp['error']}")
     else:
-        lines.append(f"- 采集帧数: {sp['frames']}, 设备: {sp.get('devices')}")
+        total = sp.get("total") or sp["frames"]
+        lines.append(f"- 采集帧数: {sp['frames']}/{total}, 去重文本 {sp.get('unique', 0)} 条, "
+                     f"覆盖时段 {sp.get('span') or '无'}, 设备: {sp.get('devices')}")
         for i, t in enumerate(sp.get("samples", []), 1):
             clean = re.sub(r"\s+", " ", t)
             lines.append(f"- 样本{i}: {clean}")
     fs = data.get("feishu") or {}
     lines.append("")
-    lines.append("## 5. 飞书协作")
+    lines.append("## 6. 飞书协作")
     if fs.get("error"):
         lines.append(f"- {fs['error']}")
     elif not fs.get("chats"):
@@ -447,6 +703,7 @@ def main():
         "activitywatch": collect_activitywatch(start, end),
         "agent_sessions": collect_claude(start, end) + collect_pi(start, end),
         "git": collect_git(start, end),
+        "github": collect_github(start, end),
         "screenpipe": collect_screenpipe(start, end),
         "feishu": collect_feishu.collect(start, end),
     }

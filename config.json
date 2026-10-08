@@ -1,5 +1,5 @@
 {
-  "aw_url": "http://localhost:5600",
+  "aw_url": "http://localhost:5601",
   "aw_host": "workstation-2700",
   "sp_url": "http://localhost:3030",
   "sp_token_file": "/home/yangrm/.config/ai-work-journal/screenpipe-token",
@@ -11,12 +11,15 @@
     "/home/yangrm/kaggle"
   ],
   "git_max_depth": 3,
-  "pi_bin": "/home/yangrm/.local/bin/pi",
+  "gh_bin": "/home/yangrm/.local/bin/gh",
+  "pi_bin": "/home/yangrm/.pi/agent/bin/pi",
   "lark_bin": "/home/yangrm/.local/bin/lark-cli",
   "feishu_my_open_id": "ou_12fd944ef0150b30c2a4f4516615e000",
   "feishu_max_chats": 30,
   "feishu_max_files": 8,
   "top_apps": 25,
   "top_titles_per_app": 3,
-  "sp_samples": 8
+  "sp_samples": 40,
+  "sp_sample_chars": 400,
+  "sp_max_frames": 5000
 }

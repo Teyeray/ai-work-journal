@@ -17,15 +17,17 @@
   飞书(lark-cli 用户身份)      当天会话消息、收发文件及内容预览
 
 流水线
-  collect.py   采集某天数据 → data/<date>.digest.md
-  daily.py     digest → pi 无头总结 → reports/<date>.md → 推飞书
-  weekly.py    7 天日报 → pi 总结 → reports/weekly/<isoyear>-W<ww>.md → 推飞书
-  feishu.py    markdown 导入飞书为 docx(lark-cli 未授权时自动跳过)
+  collect.py    采集某天数据 → data/<date>.json(含小时分布/项目归属/token) + data/<date>.digest.md
+  daily.py      digest → pi 无头总结 → reports/<date>.md → 推飞书 → 刷新看板
+  weekly.py     7 天日报 → pi 总结 → reports/weekly/<isoyear>-W<ww>.md → 推飞书
+  dashboard.py  汇总全部 data/*.json → reports/dashboard.html(离线交互看板)
+  feishu.py     markdown 导入飞书为 docx(lark-cli 未授权时自动跳过)
 
 模板
-  templates/daily.md    日报模板+提示词(百度文库/飞书模板中心标准结构)
-  templates/weekly.md   周报模板+提示词
-  改模板只需编辑这两个文件,含 {date}/{label} 占位符,保存即生效。
+  templates/daily.md      日报模板+提示词(百度文库/飞书模板中心标准结构)
+  templates/weekly.md     周报模板+提示词
+  templates/dashboard.html 看板页面模板(内联 SVG,无外部依赖)
+  改模板只需编辑这些文件,含 {date}/{label} 占位符,保存即生效。
 
 调度(systemd 用户定时器)
   ai-journal-daily.timer    每天 23:00
@@ -39,7 +41,18 @@
 journal daily                                        # 立即生成今天日报
 journal daily 2026-10-03                             # 补生成某天
 journal weekly                                       # 生成本周周报
+journal dashboard                                    # 刷新可视化看板
 journal feishu reports/2026-10-05.md                 # 手动推飞书
+```
+
+## 可视化看板
+
+`journal dashboard` 生成 `reports/dashboard.html`,浏览器直接打开,离线可用:
+
+- 总览: 每日时长趋势、项目堆叠、时段热力图(小时×日期)、项目占比、token 消耗(按模型)、会话数、工程产出
+- 单日: 24h 时间线(前台项目分段 + agent 会话轨道 + 提交/飞书事件点)、小时明细、会话列表(任务/token/工具)、飞书搞录
+- 点击柱子或热力图行进入单日;支持 `dashboard.html?day=2026-10-07` 直链
+- 每晚日报生成后自动刷新;白天手动跑 `journal dashboard` 可纳入当天实时数据
 ```
 
 ## 首次配置残留事项
@@ -60,16 +73,17 @@ lark-cli config init --new
 | 原始数据/摘要 | data/*.json, data/*.digest.md |
 | 日报 | reports/*.md |
 | 周报 | reports/weekly/*.md |
+| 可视化看板 | reports/dashboard.html |
 | 配置 | config.json |
 | ScreenPipe API 令牌 | ~/.config/ai-work-journal/screenpipe-token |
-| ActivityWatch 界面 | http://localhost:5600 |
+| ActivityWatch 界面 | http://localhost:5601 |
 
 ## 修改采集范围
 
 编辑 config.json:
 
 - project_roots: git 扫描根目录列表
-- top_apps / top_titles_per_app / sp_samples: 摘要容量
+- top_apps / top_titles_per_app / sp_samples / sp_sample_chars: 摘要容量(sp_samples 条 OCR 样本,每条 sp_sample_chars 字)
 
 改完运行 `journal collect` 验证。
 

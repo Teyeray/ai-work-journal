@@ -65,6 +65,14 @@ def main():
                         capture_output=True, text=True)
     if fe.stdout.strip():
         print(fe.stdout.strip())
+    # best-effort dashboard refresh so the day lands in the charts
+    try:
+        db = subprocess.run([sys.executable, str(BASE / "dashboard.py")],
+                            capture_output=True, text=True, timeout=120)
+        if db.stdout.strip():
+            print(db.stdout.strip())
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
