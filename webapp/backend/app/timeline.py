@@ -180,7 +180,13 @@ def _apply_overrides(day_key: str, blocks):
     return blocks, applied
 
 
+EXEC_GAP = dt.timedelta(seconds=600)  # events further apart than this = waiting, not executing
+
+
 def _agent_lane(day_key: str):
+    """One lane per session. Lifecycle (first..last event) vs execution:
+    event clusters with internal gaps <= EXEC_GAP are executing; gaps between
+    clusters are waiting-for-user / idle. Both clipped to the day."""
     start, end = day_bounds(day_key)
     rows = db.q("SELECT s.id, s.source, s.start_at, s.end_at, s.status, s.cwd "
                 "FROM agent_sessions s WHERE s.start_at < ? AND "
@@ -192,9 +198,31 @@ def _agent_lane(day_key: str):
         iv = _clip((s0, s1), start, end)
         if not iv:
             continue
+        evs = db.q("SELECT e.occurred_at, e.event_type FROM session_event_links l "
+                   "JOIN source_events e ON e.id = l.event_id WHERE l.session_id=? "
+                   "ORDER BY e.occurred_at", (r["id"],))
+        ts = [parse_ts(e["occurred_at"]) for e in evs]
+        ts = [t for t in ts if t is not None and start <= t < end]
+        n_user = sum(1 for e in evs if e["event_type"] == "msg_user")
+        clusters = []
+        for t in ts:
+            if clusters and t - clusters[-1][1] <= EXEC_GAP:
+                clusters[-1][1] = t
+            else:
+                clusters.append([t, t])
+        exec_sec = 0
+        segments = []
+        for c0, c1 in clusters:
+            c = _clip((c0, c1), start, end)
+            if not c:
+                continue
+            segments.append(c)
+            exec_sec += (c[1] - c[0]).total_seconds()
         out.append({"id": r["id"], "agent": r["source"], "start": iv[0], "end": iv[1],
                     "status": r["status"], "cwd": r["cwd"],
-                    "project": projects.classify_for_session(r["cwd"])})
+                    "project": projects.classify_for_session(r["cwd"]),
+                    "segments": segments, "exec_sec": round(exec_sec),
+                    "n_events": len(evs), "n_user": n_user})
     return out
 
 
@@ -243,6 +271,7 @@ def day_timeline(day_key: str) -> dict:
     human_union = _union([(b["start"], b["end"]) for b in blocks])
     human_total = sum((e - s).total_seconds() for s, e in human_union)
     agent_total = sum((a["end"] - a["start"]).total_seconds() for a in agent)
+    agent_exec_total = sum(a["exec_sec"] for a in agent)
     agent_union = _union([(a["start"], a["end"]) for a in agent])
     agent_union_total = sum((e - s).total_seconds() for s, e in agent_union) if agent else 0
     window_total = 0
@@ -270,7 +299,12 @@ def day_timeline(day_key: str) -> dict:
         "agent": [{"id": a["id"], "agent": a["agent"], "cwd": a["cwd"],
                    "project": a["project"], "status": a["status"],
                    "start": a["start"].astimezone(tz()).isoformat(),
-                   "end": a["end"].astimezone(tz()).isoformat()} for a in agent],
+                   "end": a["end"].astimezone(tz()).isoformat(),
+                   "segments": [{"start": s0.astimezone(tz()).isoformat(),
+                                 "end": e0.astimezone(tz()).isoformat()}
+                                for s0, e0 in a["segments"]],
+                   "exec_sec": a["exec_sec"], "n_events": a["n_events"],
+                   "n_user": a["n_user"]} for a in agent],
         "evidence": [{"id": p["id"], "at": p["at"].astimezone(tz()).isoformat(),
                       "kind": p["kind"], "label": p["label"], "source": p["source"]}
                      for p in evidence],
@@ -289,6 +323,7 @@ def day_timeline(day_key: str) -> dict:
             "observed_coverage": round(human_total / obs_dur, 3) if obs_dur else None,
             "agent_runtime_sec": round(agent_total),
             "agent_runtime_union_sec": round(agent_union_total),
+            "agent_exec_sec": round(agent_exec_total),
             "unknown_sec": round(sum((e - s).total_seconds() for s, e in (unknown or []))),
             "evidence_count": len(evidence),
         },

@@ -22,6 +22,10 @@ export interface AgentLane {
   status: string;
   start: string;
   end: string;
+  segments: { start: string; end: string }[];
+  exec_sec: number;
+  n_events: number;
+  n_user: number;
 }
 
 export interface EvidencePoint {
@@ -55,6 +59,7 @@ export interface Timeline {
     observed_coverage: number | null;
     agent_runtime_sec: number;
     agent_runtime_union_sec: number;
+    agent_exec_sec: number;
     unknown_sec: number;
     evidence_count: number;
   };
@@ -70,11 +75,26 @@ export interface Kpi {
   state: string;
 }
 
+export interface Insight {
+  kind: string;
+  title: string;
+  detail: string;
+}
+
+export interface CommitItem {
+  at: string;
+  repo: string;
+  subject: string;
+  sha: string;
+}
+
 export interface TodayData {
   day_key: string;
   kpis: Kpi[];
   allocation: Record<string, number>;
   agent_allocation: Record<string, number>;
+  insights: Insight[];
+  outcomes: { commits: CommitItem[]; n_sessions: number; n_user_inputs: number };
   quality: {
     has_observation: boolean;
     unknown_sec: number;
@@ -256,24 +276,25 @@ export function fmtDur(sec: number): string {
   return h ? `${h}h${m ? m + "m" : ""}` : `${m}m`;
 }
 
+/** Data timestamps carry the data timezone offset (+08:00), so slice the
+ *  string directly — exact and independent of the browser timezone. */
 export function fmtHM(iso: string): string {
-  return new Date(iso).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return iso.slice(11, 16);
 }
 
 export function hhmm(iso: string): number {
-  const d = new Date(iso);
-  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+  return +iso.slice(11, 13) + +iso.slice(14, 16) / 60 + +iso.slice(17, 19) / 3600;
 }
 
 export const PALETTE = [
-  "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#0891b2",
-  "#d97706", "#db2777", "#4f46e5", "#059669", "#65a30d",
-  "#ea580c", "#7c3aed",
+  "#5E6AD2", "#7C6FD9", "#0EA5E9", "#14B8A6", "#2FA36B",
+  "#B5A12A", "#E8862E", "#D95762", "#C94F8C", "#8C8C99",
 ];
+
+export const AGENT_COLORS: Record<string, string> = {
+  pi: "#5E6AD2",
+  "claude-code": "#E8862E",
+};
 
 export function projectColor(name: string): string {
   let h = 0;

@@ -15,7 +15,7 @@ export default function App() {
   const [days, setDays] = useState<string[]>([]);
   const [day, setDay] = useState(() =>
     new URLSearchParams(location.search).get("day") ||
-    new Date().toISOString().slice(0, 10));
+    new Date().toLocaleDateString("sv")); // local date, not UTC
   const [syncing, setSyncing] = useState(false);
 
   const loadDays = () => api.days().then((r) => {
@@ -39,37 +39,44 @@ export default function App() {
     setTab(t);
     history.replaceState(null, "", `?t=${t}${t === "today" ? `&day=${day}` : ""}`);
   };
+  const goTab = (t: string, d?: string) => {
+    if (d) setDay(d);
+    setTab(t as Tab);
+    history.replaceState(null, "", `?t=${t}${t === "today" ? `&day=${d ?? day}` : ""}`);
+  };
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-2.5">
-          <span className="font-semibold">AI 工作看板</span>
-          <nav className="flex gap-1">
+      <header className="sticky top-0 z-20 border-b border-neutral-200/80 bg-white/85 backdrop-blur-md">
+        <div className="mx-auto flex h-12 max-w-[1560px] items-center gap-5 px-6">
+          <span className="flex items-center gap-2 text-[13.5px] font-semibold tracking-tight text-neutral-900">
+            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-neutral-800 text-[10px] font-bold text-white">AI</span>
+            工作看板
+          </span>
+          <nav className="flex items-center gap-0.5">
             {([["today", "今日"], ["analytics", "分析"], ["sessions", "会话"], ["projects", "项目"]] as [Tab, string][])
               .map(([t, label]) => (
                 <button key={t}
-                  className={`rounded px-3 py-1 text-sm ${tab === t ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100"}`}
+                  className={`tab ${tab === t ? "tab-active" : ""}`}
                   onClick={() => go(t)}>{label}</button>
               ))}
           </nav>
-          <div className="ml-auto flex items-center gap-2 text-xs text-neutral-400">
-            <span className={connected ? "text-green-600" : ""}>
-              {connected ? "● live" : "○ offline"}
+          <div className="ml-auto flex items-center gap-3">
+            <span className={`flex items-center gap-1.5 text-[11px] font-medium ${connected ? "text-green-600" : "text-neutral-400"}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-green-500 running-dot" : "bg-neutral-300"}`} />
+              {connected ? "实时" : "离线"}
             </span>
             <button className="btn" disabled={syncing} onClick={sync}>
-              {syncing ? "同步中…" : "同步"}
+              {syncing ? "同步中…" : "同步数据"}
             </button>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-4">
-        {tab === "today" && <Today day={day} days={days} onDayChange={setDay} />}
-        {tab === "analytics" && <Analytics days={days.length ? days : [day]} />}
-        {tab === "sessions" && <Sessions day={day} />}
-        {tab === "projects" && <Projects />}
-      </main>
+      {tab === "today" && <Today day={day} days={days} onDayChange={setDay} goTab={goTab} />}
+      {tab === "analytics" && <div className="mx-auto max-w-[1100px] px-6 py-5"><Analytics days={days.length ? days : [day]} /></div>}
+      {tab === "sessions" && <div className="mx-auto max-w-[1100px] px-6 py-5"><Sessions day={day} /></div>}
+      {tab === "projects" && <div className="mx-auto max-w-[1100px] px-6 py-5"><Projects /></div>}
     </div>
   );
 }

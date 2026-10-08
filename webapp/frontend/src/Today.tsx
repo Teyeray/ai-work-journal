@@ -1,18 +1,27 @@
 import { useEffect, useState } from "react";
 import { api, fmtDur, fmtHM, projectColor, CATEGORY_COLOR } from "./api";
-import type { Block, Timeline, TodayData, Interval, Override } from "./api";
-import { DayTimeline, isCat } from "./DayTimeline";
+import type {
+  AgentLane, Block, Insight, CommitItem, Interval, Override, Timeline, TodayData,
+} from "./api";
+import {
+  ActivityTimeline, isCat, mergeSegments, type Selection, type Segment, t2m,
+} from "./Timeline";
 import { useSse } from "./sse";
 
-export function Today({ day, days, onDayChange }: {
+const KIND_ICON: Record<string, string> = {
+  focus: "◎", overlap: "⇄", night: "☾", unknown: "?",
+  projects: "▤", outcomes: "⎇", corrections: "✎",
+};
+
+export function Today({ day, days, onDayChange, goTab }: {
   day: string;
   days: string[];
   onDayChange: (d: string) => void;
+  goTab: (t: string, day?: string) => void;
 }) {
   const [tl, setTl] = useState<Timeline | null>(null);
   const [today, setToday] = useState<TodayData | null>(null);
-  const [sel, setSel] = useState<Block | Interval | null>(null);
-  const [selKind, setSelKind] = useState<"block" | "unknown">("block");
+  const [sel, setSel] = useState<Selection | null>(null);
   const [ovs, setOvs] = useState<Override[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
@@ -22,289 +31,496 @@ export function Today({ day, days, onDayChange }: {
     api.overrides(day).then((r) => setOvs(r.overrides)).catch(() => {});
     setSel(null);
   };
-
-  useEffect(() => { load(); }, [day]);
-  useSse((msg) => {
-    if (msg.affected_days.includes(day)) load();
-  });
+  useEffect(load, [day]);
+  useSse((msg) => { if (msg.affected_days.includes(day)) load(); });
 
   const idx = days.indexOf(day);
+  const activeOv = ovs.filter((o) => !o.superseded_by && o.field !== "__revoke__");
+  const isToday = day === new Date().toISOString().slice(0, 10);
 
   return (
-    <div className="space-y-4">
-      {/* date nav */}
-      <div className="flex items-center gap-3">
-        <button className="btn" disabled={idx <= 0} onClick={() => onDayChange(days[idx - 1])}>←</button>
-        <h2 className="text-lg font-semibold">{day} {weekday(day)}</h2>
-        <button className="btn" disabled={idx < 0 || idx >= days.length - 1}
-          onClick={() => onDayChange(days[idx + 1])}>→</button>
-        <select value={day} onChange={(e) => onDayChange(e.target.value)}
-          className="input w-40">
-          {[...days].reverse().map((d) => <option key={d}>{d}</option>)}
-        </select>
-        {err && <span className="text-red-600 text-sm">{err}</span>}
-      </div>
-
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        {(today?.kpis ?? []).map((k) => (
-          <div key={k.key} className="card">
-            <div className="text-xs text-neutral-500">{k.label}</div>
-            <div className="mt-1 flex items-baseline gap-1">
-              <span className={`text-2xl font-semibold ${k.state === "n/a" || k.state === "no_observation" ? "text-neutral-400" : ""}`}>
-                {k.value ?? "—"}
-              </span>
-              {k.unit && <span className="text-xs text-neutral-400">{k.unit}</span>}
-            </div>
-            {k.note && <div className="text-[11px] text-neutral-400">{k.note}</div>}
-            {k.state === "no_observation" &&
-              <div className="text-[11px] text-amber-600">无观察数据</div>}
+    <div className="mx-auto grid max-w-[1560px] gap-4 px-6 py-5 xl:grid-cols-[minmax(0,1fr)_336px]">
+      {/* ================= main column ================= */}
+      <div className="min-w-0 space-y-4">
+        {/* page header */}
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+          <h1 className="text-[20px] font-semibold tracking-tight text-neutral-900">
+            {fmtDate(day)}
+          </h1>
+          <div className="flex items-center gap-1.5">
+            <button className="icon-btn" disabled={idx <= 0}
+              onClick={() => onDayChange(days[idx - 1])} title="前一天">←</button>
+            <select value={day} onChange={(e) => onDayChange(e.target.value)}
+              className="input h-7 w-[128px] text-[12px]">
+              {[...days].reverse().map((d) => <option key={d}>{d}</option>)}
+            </select>
+            <button className="icon-btn" disabled={idx < 0 || idx >= days.length - 1}
+              onClick={() => onDayChange(days[idx + 1])} title="后一天">→</button>
           </div>
-        ))}
-        {!today && <div className="card md:col-span-4">加载中…</div>}
-      </div>
-
-      {/* timeline */}
-      <div className="card p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="font-medium">时间轴</h3>
-          <div className="flex gap-3 text-[11px] text-neutral-500">
-            <span>■ 项目(彩) / 分类(灰)</span>
-            <span><span className="text-neutral-400">▬</span> 离开(afk)</span>
-            <span className="text-amber-500">▨ 未知</span>
-            <span>● commit</span>
-            <span><span className="text-cyan-600">▬</span> pi</span>
-            <span><span className="text-orange-500">▬</span> claude</span>
+          {/* summary chips */}
+          <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-neutral-500">
+            <Stat label="人类活跃" value={fmtDur(today?.metrics.human_active_sec ?? 0)}
+              color="#5E6AD2" />
+            <Stat label="Agent 执行" value={fmtDur(today?.metrics.agent_exec_sec ?? 0)}
+              color="#E8862E" note={today ? `${today.outcomes.n_sessions} 会话` : undefined} />
+            <Stat label="提交" value={`${today?.outcomes.commits.length ?? 0}`}
+              note={today ? `${today.outcomes.n_user_inputs} 次输入` : undefined} />
+            {activeOv.length > 0 &&
+              <Stat label="修正" value={`${activeOv.length}`} color="#D97706" />}
+            {err && <span className="text-red-600">{err}</span>}
           </div>
         </div>
-        {tl && tl.has_observation ? (
-          <DayTimeline
-            blocks={tl.blocks}
-            away={tl.away}
-            unknown={tl.unknown}
-            agent={tl.agent}
-            evidence={tl.evidence}
-            onBlockClick={(b) => { setSel(b); setSelKind("block"); }}
-            onUnknownClick={(iv) => { setSel(iv); setSelKind("unknown"); }}
-          />
-        ) : tl ? (
-          <div className="py-8 text-center text-sm text-neutral-400">
-            该日无前台活动观察(仅 Agent 会话与证据)
-            <div className="mt-2 text-xs">
-              {tl.metrics.evidence_count} 条事件证据 · {tl.agent.length} 个 Agent 会话
-            </div>
-          </div>
-        ) : (
-          <div className="py-8 text-center text-sm text-neutral-400">加载中…</div>
-        )}
-      </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* drawer: selected block / unknown */}
-        <div className="card p-4 lg:col-span-2">
-          {selKind === "block" && sel && "titles" in sel ? (
-            <BlockDrawer block={sel as Block} tl={tl} day={day}
-              overrides={ovs} onChanged={load} />
-          ) : selKind === "unknown" && sel ? (
-            <UnknownDrawer iv={sel as Interval} day={day}
-              onChanged={load} />
+        {/* timeline card */}
+        <div className="card px-5 pb-4 pt-4">
+          <div className="mb-1 flex items-baseline justify-between">
+            <h2 className="text-[15px] font-semibold text-neutral-800">活动时间轴</h2>
+            <span className="text-[11px] text-neutral-400">
+              滚轮缩放 · 拖拽平移 · 点击查看证据与修正
+            </span>
+          </div>
+          {tl ? (
+            <ActivityTimeline tl={tl} selection={sel} onSelect={setSel} isToday={isToday} />
           ) : (
-            <div className="py-6 text-center text-sm text-neutral-400">
-              点击时间轴上的区块或未知区间查看证据与修正
-            </div>
+            <div className="py-24 text-center text-[13px] text-neutral-400">加载中…</div>
           )}
         </div>
 
-        {/* allocation + quality */}
-        <div className="space-y-4">
-          {today && (
-            <div className="card p-4">
-              <h3 className="mb-2 font-medium">项目分布(人)</h3>
-              <Allocation allocation={today.allocation} />
-            </div>
+        {/* detail panel */}
+        <div className="card px-5 py-4">
+          {sel?.kind === "segment" && (
+            <SegmentDetail segment={sel.segment} tl={tl} day={day}
+              overrides={ovs} onChanged={load} goTab={goTab} />
           )}
-          {today && (
-            <div className="card p-4">
-              <h3 className="mb-2 font-medium">Agent 分布(会话时长)</h3>
-              <Allocation allocation={today.agent_allocation} />
-            </div>
+          {sel?.kind === "unknown" && (
+            <UnknownDetail interval={sel.interval} day={day} onChanged={load} />
           )}
-          {today && (
-            <div className="card p-4 text-xs text-neutral-500">
-              <h3 className="mb-2 font-medium text-neutral-800">数据质量</h3>
-              <ul className="space-y-1">
-                <li>观察窗口:{fmtDur(today.quality.observed_span_sec)} {
-                  today.quality.has_observation ? "" : "(无)"}</li>
-                <li>未知区间:{fmtDur(today.quality.unknown_sec)}</li>
-                <li>已索引事件:{today.quality.events_indexed}</li>
-                <li>人工修正:{ovs.filter((o) => !o.superseded_by && o.field !== "__revoke__").length} 条(当前生效)</li>
-              </ul>
+          {sel?.kind === "session" && (
+            <SessionDetail session={sel.session} goTab={goTab} day={day} />
+          )}
+          {!sel && (
+            <div className="flex items-center gap-2 py-6 text-[13px] text-neutral-400">
+              <span className="text-neutral-300">←</span>
+              点击时间轴上的活动段 / 会话 / 未知区间,这里将展示其证据链与修正操作。
             </div>
           )}
         </div>
       </div>
+
+      {/* ================= right rail ================= */}
+      <aside className="space-y-4">
+        <InsightsCard insights={today?.insights ?? []} day={day} onPick={onDayChange} />
+        <AllocationCard today={today} />
+        <OutcomesCard today={today} />
+        <QualityCard today={today} activeOv={activeOv.length}
+          observedSpan={tl?.observed_span ?? null} />
+      </aside>
     </div>
   );
 }
 
-function Allocation({ allocation }: { allocation: Record<string, number> }) {
-  const items = Object.entries(allocation).sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const total = Object.values(allocation).reduce((s, v) => s + v, 0);
-  if (!total) return <div className="text-xs text-neutral-400">无数据</div>;
-  return (
-    <div className="space-y-1.5">
-      {items.map(([name, sec]) => (
-        <div key={name} className="flex items-center gap-2 text-xs">
-          <span className="w-24 truncate text-right">{name}</span>
-          <div className="h-3.5 flex-1 overflow-hidden rounded bg-neutral-100">
-            <div className="h-full rounded"
-              style={{ width: `${(sec / total) * 100}%`, background: isCat(name) ? CATEGORY_COLOR : projectColor(name) }} />
-          </div>
-          <span className="w-12 text-neutral-500">{fmtDur(sec)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function BlockDrawer({ block, tl, day, overrides, onChanged }: {
-  block: Block; tl: Timeline | null; day: string;
-  overrides: Override[]; onChanged: () => void;
+function Stat({ label, value, note, color }: {
+  label: string; value: string; note?: string; color?: string;
 }) {
-  const [project, setProject] = useState(block.project);
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span className="text-[11px] text-neutral-400">{label}</span>
+      <span className="font-semibold tabular-nums" style={{ color: color ?? "#27272a" }}>{value}</span>
+      {note && <span className="text-[11px] text-neutral-400">{note}</span>}
+    </span>
+  );
+}
+
+// ================= detail panels =================
+
+function SegmentDetail({ segment, tl, day, overrides, onChanged, goTab }: {
+  segment: Segment; tl: Timeline | null; day: string;
+  overrides: Override[]; onChanged: () => void;
+  goTab: (t: string, day?: string) => void;
+}) {
+  const blocks = segment.blocks;
+  const anchor = blocks[0];
+  const [project, setProject] = useState(anchor.project);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const evIn = (tl?.evidence ?? []).filter(
-    (e) => e.at >= block.start && e.at < block.end,
-  ).slice(0, 12);
-  const myOv = overrides.filter(
-    (o) => o.anchor_start >= block.start && o.anchor_start < block.end,
-  );
 
-  const correct = async () => {
-    setBusy(true);
-    try {
-      await api.addOverride({
-        day_key: day, anchor_start: block.start, field: "project", value: project,
-        note: note || "",
-      });
-      setMsg("已修正(原值保留,可撤销)");
-      onChanged();
-    } catch (e) { setMsg(`失败: ${e}`); }
-    setBusy(false);
-  };
+  useEffect(() => { setProject(anchor.project); setMsg(null); }, [anchor.project, anchor.start]);
+
+  const start = segment.start, end = segment.end;
+  const dur = (t2m(end) - t2m(start)) * 60;
+  const evIn = (tl?.evidence ?? []).filter((e) => e.at >= start && e.at < end);
+  const titles = blocks.flatMap((b) => b.titles).slice(0, 10);
+  const related = (tl?.agent ?? []).filter((a) =>
+    a.segments.some((s) => s.end > start && s.start < end));
+  const myOv = overrides.filter((o) => !o.superseded_by &&
+    o.field !== "__revoke__" && o.anchor_start >= start && o.anchor_start < end);
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="h-3 w-3 rounded" style={{ background: projectColor(block.project) }} />
-        <h3 className="font-semibold">{block.project}</h3>
-        <span className="badge">{block.activity_type}</span>
-        {block.is_manual_override && <span className="badge bg-neutral-900 text-white">人工修正</span>}
-        <span className="ml-auto text-xs text-neutral-500">
-          {fmtHM(block.start)}–{fmtHM(block.end)} · {fmtDur((+new Date(block.end) - +new Date(block.start)) / 1000)}
-        </span>
-      </div>
-
-      <div className="text-xs text-neutral-500">
-        置信度 {Math.round(block.confidence * 100)}% · 原始窗口事件 {block.n_events} · 证据 {block.evidence_count} 条
-      </div>
-
-      {block.titles.length > 0 && (
-        <div className="rounded bg-neutral-100 p-2 text-[11px] leading-relaxed text-neutral-600">
-          {block.titles.slice(0, 6).map((t, i) => <div key={i} className="truncate">“{t}”</div>)}
+    <div className="grid gap-5 lg:grid-cols-2">
+      {/* left: meta + titles */}
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="h-3 w-3 rounded-[4px]"
+            style={{ background: isCat(segment.project) ? CATEGORY_COLOR : projectColor(segment.project) }} />
+          <h3 className="text-[15px] font-semibold text-neutral-900">{segment.project}</h3>
+          <span className="badge bg-neutral-100">{blocks[0].activity_type}</span>
+          {anchor.is_manual_override && <span className="badge badge-dark">人工修正</span>}
+          <span className="ml-auto text-[12px] tabular-nums text-neutral-500">
+            {fmtHM(start)}–{fmtHM(end)} · {fmtDur(dur)}
+          </span>
         </div>
-      )}
+        <div className="mt-1.5 flex gap-3 text-[11.5px] text-neutral-400">
+          <span>置信 {Math.round(anchor.confidence * 100)}%</span>
+          <span>{blocks.reduce((s, b) => s + b.n_events, 0)} 窗口事件</span>
+          <span>{blocks.reduce((s, b) => s + b.evidence_count, 0)} 条证据</span>
+          <span>{blocks.length > 1 ? `${blocks.length} 段合并(≤8min 间隙)` : "单段"}</span>
+        </div>
 
-      <div>
-        <div className="mb-1 text-xs font-medium text-neutral-600">证据(该区间内)</div>
+        {titles.length > 0 && (
+          <div className="mt-3">
+            <div className="label mb-1.5">窗口标题(人类活动观察)</div>
+            <div className="thin-scroll max-h-28 overflow-y-auto rounded-lg bg-neutral-50 px-3 py-2 text-[11.5px] leading-relaxed text-neutral-500">
+              {titles.map((t, i) => (
+                <div key={i} className="truncate border-b border-neutral-100 py-0.5 last:border-0" title={t}>
+                  “{t}”
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {related.length > 0 && (
+          <div className="mt-3">
+            <div className="label mb-1.5">同时段的 Agent 会话({related.length})</div>
+            <ul className="space-y-1">
+              {related.slice(0, 4).map((a) => (
+                <li key={a.id}>
+                  <button className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] hover:bg-neutral-50"
+                    onClick={() => goTab("sessions", day)}>
+                    <span className="h-2 w-2 rounded-full"
+                      style={{ background: a.agent === "pi" ? "#5E6AD2" : "#E8862E" }} />
+                    <span className="text-neutral-600">{a.agent === "claude-code" ? "claude" : a.agent} · {a.project}</span>
+                    <span className="ml-auto text-[11px] tabular-nums text-neutral-400">
+                      执行 {fmtDur(a.exec_sec)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {/* right: evidence + correction */}
+      <div className="min-w-0">
+        <div className="label mb-1.5">证据链({evIn.length})</div>
         {evIn.length ? (
-          <ul className="max-h-32 space-y-0.5 overflow-auto text-[11px]">
+          <ul className="thin-scroll max-h-40 space-y-0.5 overflow-y-auto text-[11.5px]">
             {evIn.map((e) => (
-              <li key={e.id} className="flex gap-2">
-                <span className="text-neutral-400">{fmtHM(e.at)}</span>
+              <li key={e.id} className="flex gap-2 border-b border-neutral-50 py-1 last:border-0">
+                <span className="w-10 shrink-0 tabular-nums text-neutral-400">{fmtHM(e.at)}</span>
                 <span className={
-                  e.kind === "commit" ? "text-neutral-800" :
-                  e.kind === "agent_user" ? "text-cyan-700" : "text-neutral-500"}>
-                  {e.kind === "commit" ? "⎇" : e.kind === "agent_user" ? "❯" : "·"} {e.label || e.kind}
+                  e.kind === "commit" ? "ev-commit font-medium" :
+                  e.kind === "agent_user" ? "ev-user" : "ev-meta"}>
+                  {e.kind === "commit" ? "⎇ 提交" : e.kind === "agent_user" ? "❯ 输入" : "· 会话启动"}
                 </span>
+                <span className="min-w-0 flex-1 truncate text-neutral-500" title={e.label}>{e.label || "—"}</span>
               </li>
             ))}
           </ul>
-        ) : <div className="text-[11px] text-neutral-400">无(仅窗口观察)</div>}
-      </div>
+        ) : (
+          <div className="text-[11.5px] text-neutral-400">无事件级证据 — 该段的观察来源是窗口标题。</div>
+        )}
 
-      <div className="border-t pt-3">
-        <div className="mb-1 text-xs font-medium text-neutral-600">修正项目归属</div>
-        <div className="flex gap-2">
-          <input value={project} onChange={(e) => setProject(e.target.value)}
-            className="input flex-1" placeholder="项目名" />
-          <button className="btn-primary" disabled={busy || project === block.project && !myOv.length}
-            onClick={correct}>修正</button>
-        </div>
-        <input value={note} onChange={(e) => setNote(e.target.value)}
-          className="input mt-2 w-full text-xs" placeholder="备注(可选)" />
-        {msg && <div className="mt-1 text-[11px] text-green-700">{msg}</div>}
-      </div>
+        <div className="mt-4 border-t border-neutral-100 pt-3">
+          <div className="label mb-1.5">修正项目归属(追加式,可撤销)</div>
+          <div className="flex gap-2">
+            <input value={project} onChange={(e) => setProject(e.target.value)}
+              className="input flex-1" placeholder="项目名" />
+            <button className="btn-primary" disabled={busy || !project.trim() || project === anchor.project && !myOv.length}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await api.addOverride({
+                    day_key: day, anchor_start: anchor.start, field: "project",
+                    value: project.trim(), note: note || "",
+                  });
+                  setMsg("已修正 — 原值保留,重采集不覆盖");
+                  onChanged();
+                } catch (e) { setMsg(`失败:${e}`); }
+                setBusy(false);
+              }}>修正</button>
+          </div>
+          <input value={note} onChange={(e) => setNote(e.target.value)}
+            className="input mt-2 w-full" placeholder="备注(可选)" />
+          {msg && <div className="mt-1.5 text-[11px] text-green-700">{msg}</div>}
 
-      {myOv.filter((o) => !o.superseded_by && o.field === "project").length > 0 && (
-        <div className="border-t pt-2">
-          <div className="text-xs font-medium text-neutral-600">该区间的人工修正</div>
-          {myOv.filter((o) => !o.superseded_by && o.field === "project").map((o) => (
-            <div key={o.id} className="flex items-center gap-2 text-[11px]">
-              <span className="text-neutral-500">#{o.id} → {o.value}</span>
+          {myOv.filter((o) => o.field === "project").map((o) => (
+            <div key={o.id} className="mt-2 flex items-center gap-2 text-[11.5px] text-neutral-500">
+              <span>#{o.id} → {o.value}(原 {o.original_value})</span>
               <button className="link" onClick={async () => {
                 await api.revokeOverride(o.id); onChanged();
               }}>撤销</button>
             </div>
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function UnknownDrawer({ iv, day, onChanged }: { iv: Interval; day: string; onChanged: () => void }) {
+function UnknownDetail({ interval, day, onChanged }: {
+  interval: Interval; day: string; onChanged: () => void;
+}) {
   const [project, setProject] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const dur = (+new Date(iv.end) - +new Date(iv.start)) / 1000;
-
+  const dur = (t2m(interval.end) - t2m(interval.start)) * 60;
   return (
-    <div className="space-y-3">
-      <h3 className="font-semibold text-amber-600">未知区间</h3>
-      <div className="text-sm text-neutral-600">
-        {fmtHM(iv.start)}–{fmtHM(iv.end)} · {fmtDur(dur)}
+    <div>
+      <h3 className="text-[15px] font-semibold text-amber-600">未知区间</h3>
+      <div className="mt-1 text-[12px] text-neutral-500">
+        {fmtHM(interval.start)}–{fmtHM(interval.end)} · {fmtDur(dur)} — 观察期内无窗口数据(虚拟桌面/全屏/采集缺口)。
       </div>
-      <p className="text-xs text-neutral-500">
-        观察窗口内无前台窗口数据(切换虚拟桌面/全屏应用/数据缺口)。
-        你可以把它标注为某个项目;标注仅追加,不会覆盖原始事件。
-      </p>
-      <div className="flex gap-2">
+      <div className="mt-3 flex gap-2">
         <input value={project} onChange={(e) => setProject(e.target.value)}
-          className="input flex-1" placeholder="标注为项目…" />
+          className="input flex-1" placeholder="把它标注为某个项目…" />
         <button className="btn-primary" disabled={busy || !project.trim()}
           onClick={async () => {
             setBusy(true);
             try {
               await api.addOverride({
-                day_key: day, anchor_start: iv.start, field: "project",
+                day_key: day, anchor_start: interval.start, field: "project",
                 value: project.trim(), note: "unknown interval annotation",
               });
               setMsg("已标注");
               onChanged();
-            } catch (e) { setMsg(`失败: ${e}`); }
+            } catch (e) { setMsg(`失败:${e}`); }
             setBusy(false);
           }}>标注</button>
       </div>
-      {msg && <div className="text-[11px] text-green-700">{msg}</div>}
+      {msg && <div className="mt-1.5 text-[11px] text-green-700">{msg}</div>}
     </div>
   );
 }
 
-function weekday(d: string) {
-  return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
-    new Date(d + "T12:00:00").getDay()
-  ];
+function SessionDetail({ session, goTab, day }: {
+  session: AgentLane; goTab: (t: string, day?: string) => void; day: string;
+}) {
+  const lifecycle = (t2m(session.end) - t2m(session.start)) * 60;
+  const wait = Math.max(0, lifecycle - session.exec_sec);
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div>
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full"
+            style={{ background: session.agent === "pi" ? "#5E6AD2" : "#E8862E" }} />
+          <h3 className="text-[15px] font-semibold text-neutral-900">
+            {session.agent === "claude-code" ? "claude" : session.agent} 会话 · {session.project}
+          </h3>
+          <span className={`badge ${session.status === "running" ? "badge-accent" : "bg-neutral-100"}`}>
+            {session.status === "running" ? "运行中" : "已结束"}
+          </span>
+          <span className="ml-auto text-[12px] tabular-nums text-neutral-500">
+            {fmtHM(session.start)}–{fmtHM(session.end)}
+          </span>
+        </div>
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-[12px]">
+          <Row k="执行时长" v={fmtDur(session.exec_sec)} />
+          <Row k="等待/挂起" v={fmtDur(wait)} />
+          <Row k="执行段数" v={`${session.segments.length}`} />
+          <Row k="事件数" v={`${session.n_events}`} />
+          <Row k="用户输入" v={`${session.n_user} 次`} />
+          <Row k="工作目录" v={session.cwd.split("/").slice(-2).join("/")} />
+        </dl>
+      </div>
+      <div>
+        <div className="label mb-1.5">执行段(10min 内事件聚为一簇)</div>
+        <div className="thin-scroll max-h-40 overflow-y-auto text-[11.5px]">
+          {session.segments.map((s, i) => (
+            <div key={i} className="flex gap-3 border-b border-neutral-50 py-1 last:border-0">
+              <span className="w-24 shrink-0 tabular-nums text-neutral-500">
+                {fmtHM(s.start)}–{fmtHM(s.end)}
+              </span>
+              <span className="tabular-nums text-neutral-400">
+                {fmtDur((t2m(s.end) - t2m(s.start)) * 60)}
+              </span>
+            </div>
+          ))}
+        </div>
+        <button className="btn mt-3" onClick={() => goTab("sessions", day)}>
+          在会话页查看完整对话与质量评审 →
+        </button>
+      </div>
+    </div>
+  );
 }
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-2 border-b border-neutral-50 py-1">
+      <dt className="text-neutral-400">{k}</dt>
+      <dd className="tabular-nums text-neutral-700">{v}</dd>
+    </div>
+  );
+}
+
+// ================= right rail =================
+
+function InsightsCard({ insights, day, onPick }: {
+  insights: Insight[]; day: string; onPick: (d: string) => void;
+}) {
+  return (
+    <div className="card px-4 py-3.5">
+      <h3 className="mb-2.5 text-[13px] font-semibold text-neutral-800">每日洞察</h3>
+      {!insights.length && (
+        <div className="text-[12px] text-neutral-400">该日暂无可计算的洞察。</div>
+      )}
+      <ul className="space-y-2.5">
+        {insights.map((i, idx) => (
+          <li key={idx} className="flex gap-2.5">
+            <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-[11px] text-neutral-500">
+              {KIND_ICON[i.kind] ?? "•"}
+            </span>
+            <div className="min-w-0">
+              <div className="text-[12.5px] font-medium leading-snug text-neutral-800">{i.title}</div>
+              <div className="mt-0.5 text-[11.5px] leading-relaxed text-neutral-400">{i.detail}</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <button className="link mt-3 text-[11.5px]"
+        onClick={() => onPick(day)}>重新计算基于当日全部事件</button>
+    </div>
+  );
+}
+
+function AllocationCard({ today }: { today: TodayData | null }) {
+  if (!today) return null;
+  return (
+    <div className="card px-4 py-3.5">
+      <h3 className="mb-2.5 text-[13px] font-semibold text-neutral-800">时间分配</h3>
+      <StackedBar allocation={today.allocation} />
+      <div className="label mt-4 mb-1.5">人类 · 按项目</div>
+      <AllocList allocation={today.allocation} />
+      <div className="label mt-4 mb-1.5">Agent 执行 · 按项目</div>
+      <AllocList allocation={today.agent_allocation} />
+    </div>
+  );
+}
+
+function StackedBar({ allocation }: { allocation: Record<string, number> }) {
+  const items = Object.entries(allocation).sort((a, b) => b[1] - a[1]);
+  const total = items.reduce((s, [, v]) => s + v, 0);
+  if (!total) return <div className="text-[12px] text-neutral-400">无观察数据</div>;
+  return (
+    <div className="flex h-3 w-full overflow-hidden rounded-full bg-neutral-100">
+      {items.map(([name, sec]) => (
+        <div key={name} title={`${name} ${fmtDur(sec)}`}
+          style={{ width: `${(sec / total) * 100}%`, background: isCat(name) ? CATEGORY_COLOR : projectColor(name) }} />
+      ))}
+    </div>
+  );
+}
+
+function AllocList({ allocation }: { allocation: Record<string, number> }) {
+  const items = Object.entries(allocation).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const total = items.reduce((s, [, v]) => s + v, 0);
+  if (!items.length) return <div className="text-[12px] text-neutral-400">无</div>;
+  return (
+    <ul className="space-y-1">
+      {items.map(([name, sec]) => (
+        <li key={name} className="flex items-center gap-2 text-[12px]">
+          <span className="h-2 w-2 shrink-0 rounded-[2px]"
+            style={{ background: isCat(name) ? CATEGORY_COLOR : projectColor(name) }} />
+          <span className="min-w-0 flex-1 truncate text-neutral-600">{name}</span>
+          <span className="tabular-nums text-neutral-400">
+            {Math.round((sec / total) * 100)}%
+          </span>
+          <span className="w-12 text-right tabular-nums text-neutral-500">{fmtDur(sec)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function OutcomesCard({ today }: { today: TodayData | null }) {
+  if (!today) return null;
+  const { commits, n_sessions, n_user_inputs } = today.outcomes;
+  return (
+    <div className="card px-4 py-3.5">
+      <h3 className="mb-2.5 text-[13px] font-semibold text-neutral-800">
+        今日成果
+        <span className="ml-2 text-[11px] font-normal text-neutral-400">
+          {n_sessions} 会话 · {n_user_inputs} 次输入
+        </span>
+      </h3>
+      {commits.length ? (
+        <ul className="thin-scroll max-h-44 space-y-1.5 overflow-y-auto">
+          {commits.map((c, i) => (
+            <CommitRow key={i} c={c} />
+          ))}
+        </ul>
+      ) : (
+        <div className="text-[12px] text-neutral-400">无 Git 提交(产出可能未提交或未走 Git)。</div>
+      )}
+    </div>
+  );
+}
+
+function CommitRow({ c }: { c: CommitItem }) {
+  return (
+    <li className="flex gap-2 text-[11.5px] leading-relaxed">
+      <span className="w-10 shrink-0 tabular-nums text-neutral-400">{fmtHM(c.at)}</span>
+      <span className="badge shrink-0 bg-neutral-100 font-mono text-[10px]">{c.repo.slice(0, 10)}</span>
+      <span className="min-w-0 flex-1 truncate text-neutral-600" title={c.subject}>{c.subject}</span>
+    </li>
+  );
+}
+
+function QualityCard({ today, activeOv, observedSpan }: {
+  today: TodayData | null; activeOv: number; observedSpan: Interval | null;
+}) {
+  if (!today) return null;
+  const q = today.quality;
+  const cov = today.metrics.observed_coverage;
+  return (
+    <div className="card px-4 py-3.5">
+      <h3 className="mb-2.5 text-[13px] font-semibold text-neutral-800">数据质量</h3>
+      <ul className="space-y-1.5 text-[12px]">
+        <QRow k="观察窗口" v={observedSpan
+          ? `${fmtHM(observedSpan.start)}–${fmtHM(observedSpan.end)}(${fmtDur(q.observed_span_sec)})`
+          : "无"} />
+        <QRow k="窗口覆盖" v={cov != null ? `${Math.round(cov * 100)}%` : "—"} />
+        <QRow k="未知区间" v={fmtDur(q.unknown_sec)} />
+        <QRow k="已索引事件" v={`${q.events_indexed}`} />
+        <QRow k="生效人工修正" v={activeOv ? `${activeOv} 条` : "0"} />
+        <QRow k="未归属会话" v={`${q.unlinked_sessions}`} />
+      </ul>
+      <p className="mt-2.5 text-[11px] leading-relaxed text-neutral-400">
+        人工修正为追加式记录:重采集与重新分析不会覆盖;修正撤销写入反向记录。
+      </p>
+    </div>
+  );
+}
+
+function QRow({ k, v }: { k: string; v: string }) {
+  return (
+    <li className="flex justify-between gap-2 border-b border-neutral-50 py-1 last:border-0">
+      <span className="text-neutral-400">{k}</span>
+      <span className="tabular-nums text-neutral-700">{v}</span>
+    </li>
+  );
+}
+
+function fmtDate(d: string) {
+  const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
+    new Date(d + "T12:00:00").getDay()];
+  const [, m, dd] = d.split("-");
+  return `${m}月${+dd}日 ${wd}`;
+}
+
+// re-export for tests / other pages
+export { mergeSegments };
+export type { Block };

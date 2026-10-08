@@ -68,7 +68,7 @@ def _day_fingerprint(day: str) -> str:
                  ((dt.date.fromisoformat(day) - dt.timedelta(days=1)).isoformat(),))
     ov = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM manual_overrides "
                "WHERE day_key=? AND superseded_by IS NULL", (day,))["m"]
-    return f"{mx['m']}|{prev['m']}|{ov}|v3"
+    return f"{mx['m']}|{prev['m']}|{ov}|v4"
 
 
 def cached_timeline(day: str) -> dict:
@@ -122,10 +122,7 @@ def get_today(day: str):
     for b in t["blocks"]:
         alloc[b["project"]] = alloc.get(b["project"], 0) + (
             parse_ts(b["end"]) - parse_ts(b["start"])).total_seconds()
-    agent_alloc = {}
-    for a in t["agent"]:
-        agent_alloc[a["project"]] = agent_alloc.get(a["project"], 0) + (
-            parse_ts(a["end"]) - parse_ts(a["start"])).total_seconds()
+    agent_exec_alloc = {}
     quality = {
         "has_observation": t["has_observation"],
         "unknown_sec": t["metrics"]["unknown_sec"],
@@ -140,9 +137,9 @@ def get_today(day: str):
         {"key": "human_active", "label": "人类活跃时长",
          "value": round(m["human_active_sec"] / 60), "unit": "min",
          "state": "measured" if m["human_active_sec"] else "none"},
-        {"key": "agent_runtime", "label": "Agent 运行时长(会话总和)",
-         "value": round(m["agent_runtime_sec"] / 60), "unit": "min",
-         "note": f"并集 {round(m['agent_runtime_union_sec'] / 60)} min", "state": "measured"},
+        {"key": "agent_exec", "label": "Agent 执行时长",
+         "value": round(m.get("agent_exec_sec", 0) / 60), "unit": "min",
+         "note": f"生命周期总和 {round(m['agent_runtime_sec'] / 60)} min", "state": "measured"},
         {"key": "project_coverage", "label": "可归属项目比例",
          "value": None, "state": "n/a"},
         {"key": "unknown", "label": "未知区间",
@@ -154,9 +151,154 @@ def get_today(day: str):
     if known_sec:
         kpis[2]["value"] = round(proj_sec / known_sec, 3)
         kpis[2]["state"] = "measured"
+    agent_exec_alloc = {}
+    for a in t["agent"]:
+        agent_exec_alloc[a["project"]] = agent_exec_alloc.get(a["project"], 0) + a["exec_sec"]
+    commits = _day_commits(day)
     return {"day_key": day, "kpis": kpis, "allocation": alloc,
-            "agent_allocation": agent_alloc, "quality": quality,
-            "metrics": m, "has_observation": t["has_observation"]}
+            "agent_allocation": agent_exec_alloc, "quality": quality,
+            "metrics": m, "has_observation": t["has_observation"],
+            "insights": _insights(day, t, alloc, commits),
+            "outcomes": {"commits": commits,
+                         "n_sessions": len(t["agent"]),
+                         "n_user_inputs": sum(a["n_user"] for a in t["agent"])}}
+
+
+def _day_commits(day: str) -> list:
+    rows = db.q("SELECT occurred_at, payload FROM source_events WHERE day_key=? "
+                "AND event_type='git_commit' ORDER BY occurred_at", (day,))
+    out = []
+    for r in rows:
+        p = json.loads(r["payload"])
+        at = parse_ts(r["occurred_at"])
+        out.append({"at": at.astimezone(tz()).isoformat() if at else r["occurred_at"],
+                    "repo": p.get("repo") or "",
+                    "subject": str(p.get("subject") or "")[:100],
+                    "sha": str(p.get("sha") or "")[:12]})
+    return out
+
+
+def _hm(sec) -> str:
+    sec = int(sec)
+    h, m = sec // 3600, sec % 3600 // 60
+    return f"{h}h{m:02d}m" if h else f"{m}m"
+
+
+def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
+    """Rule-based daily insights, every number traceable to real events."""
+    out = []
+    m = t["metrics"]
+    # 1. longest focus segment (same project, <=8min gap merged)
+    segs = []
+    for b in t["blocks"]:
+        p = parse_ts(b["start"])
+        q = parse_ts(b["end"])
+        if segs and segs[-1][2] == b["project"] and p - segs[-1][1] <= dt.timedelta(minutes=8):
+            segs[-1][1] = max(segs[-1][1], q)
+            segs[-1][3] += 1
+        else:
+            segs.append([p, q, b["project"], 1])
+    if segs:
+        best = max(segs, key=lambda x: (x[1] - x[0]).total_seconds())
+        dur = (best[1] - best[0]).total_seconds()
+        if dur >= 15 * 60:
+            out.append({"kind": "focus", "title": f"最长专注 {_hm(dur)} · {best[2]}",
+                        "detail": f"{best[0].astimezone().strftime('%H:%M')}–"
+                                   f"{best[1].astimezone().strftime('%H:%M')},"
+                                   f"其间 {best[3]} 次窗口切换"})
+    # 2. human vs agent-execution overlap
+    if m["human_active_sec"] > 0 and m.get("agent_exec_sec", 0) > 0:
+        hun = _ivs(t["blocks"])
+        exn = _ivs([iv for a in t["agent"] for iv in a["segments"]])
+        ov = _overlap_sec(hun, exn)
+        ratio = ov / m["agent_exec_sec"]
+        if ratio >= 0.6:
+            out.append({"kind": "overlap", "title": f"Agent 执行与人在线重叠 {round(ratio * 100)}%",
+                        "detail": f"执行总 {_hm(m['agent_exec_sec'])},其中 {_hm(ov)} "
+                                   f"发生在你前台活跃时"})
+        else:
+            out.append({"kind": "overlap", "title": f"Agent 多数执行无人值守(重叠 {round(ratio * 100)}%)",
+                        "detail": f"执行 {_hm(m['agent_exec_sec'])} 中仅 {_hm(ov)} 与前台活跃重叠,"
+                                   f"其余为后台/自动运行"})
+    # 3. overnight execution
+    early_sec = 0
+    for a in t["agent"]:
+        for iv in a["segments"]:
+            s0 = parse_ts(iv["start"]).astimezone()
+            if s0.hour < 8:
+                early_sec += (parse_ts(iv["end"]) - parse_ts(iv["start"])).total_seconds()
+    if early_sec > 20 * 60:
+        out.append({"kind": "night", "title": f"凌晨自动执行 {_hm(early_sec)}",
+                    "detail": "08:00 前的 Agent 执行段,多为长任务/定时任务"})
+    # 4. biggest unknown gap
+    if t["unknown"]:
+        big = max(t["unknown"], key=lambda iv: (parse_ts(iv["end"]) - parse_ts(iv["start"])).total_seconds())
+        d = (parse_ts(big["end"]) - parse_ts(big["start"])).total_seconds()
+        if d > 5 * 60:
+            out.append({"kind": "unknown", "title": f"观察缺口 {_hm(d)}",
+                        "detail": f"{parse_ts(big['start']).astimezone().strftime('%H:%M')}–"
+                                   f"{parse_ts(big['end']).astimezone().strftime('%H:%M')} "
+                                   f"无窗口数据,可在时间轴上标注"})
+    # 5. projects
+    top = sorted(alloc.items(), key=lambda x: -x[1])[:2]
+    if top and sum(alloc.values()) > 0:
+        total = sum(alloc.values())
+        t0 = f"{top[0][0]} {_hm(top[0][1])}({round(top[0][1] / total * 100)}%)"
+        t1 = f", {top[1][0]} {_hm(top[1][1])}({round(top[1][1] / total * 100)}%)" if len(top) > 1 else ""
+        out.append({"kind": "projects", "title": f"投入首位 {top[0][0]}",
+                    "detail": f"{t0}{t1}"})
+    # 6. outcomes
+    if commits:
+        repos = {}
+        for c in commits:
+            repos[c["repo"]] = repos.get(c["repo"], 0) + 1
+        rs = "、".join(f"{k}×{v}" for k, v in sorted(repos.items(), key=lambda x: -x[1]))
+        out.append({"kind": "outcomes", "title": f"{len(commits)} 个提交",
+                    "detail": rs})
+    # 7. manual overrides active
+    n_ov = db.q1("SELECT COUNT(*) AS n FROM manual_overrides WHERE day_key=? "
+                 "AND field IN ('project','activity_type','end') AND superseded_by IS NULL",
+                 (day,))["n"]
+    if n_ov:
+        out.append({"kind": "corrections", "title": f"{n_ov} 条人工修正生效中",
+                    "detail": "重采集与重新分析不会覆盖;可在详情面板撤销"})
+    return out[:7]
+
+
+def _ivs(items):
+    out = []
+    for b in items:
+        s, e = parse_ts(b["start"]), parse_ts(b["end"])
+        if s and e and e > s:
+            out.append((s, e))
+    return _sort_union(out)
+
+
+def _sort_union(intervals):
+    out = []
+    for s, e in sorted(intervals):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def _overlap_sec(a, b) -> float:
+    if not a or not b:
+        return 0
+    i = j = 0
+    total = 0.0
+    while i < len(a) and j < len(b):
+        s = max(a[i][0], b[j][0])
+        e = min(a[i][1], b[j][1])
+        if e > s:
+            total += (e - s).total_seconds()
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return total
 
 
 # ---------------- evidence ----------------
