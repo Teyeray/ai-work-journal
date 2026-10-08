@@ -10,8 +10,22 @@ from .adapters import aw, sessions, git
 def run_all() -> dict:
     results = [aw.scan(), sessions.scan("pi"), sessions.scan("claude"), git.scan()]
     days = sorted(set(d for r in results for d in r.get("days", [])))
+    _link_session_projects()
     return {"results": results, "affected_days": days,
             "total_new": sum(r.get("new", 0) for r in results)}
+
+
+def _link_session_projects() -> None:
+    """Classify each session cwd once per scan; set agent label + project_id."""
+    from . import projects
+    for s in db.q("SELECT id, source, cwd FROM agent_sessions WHERE project_id IS NULL"):
+        label = projects.classify_for_session(s["cwd"] or "")
+        if label == "Unassigned":
+            continue
+        projects.ensure_project(label)
+        pid = projects.resolve_project_id(label)
+        db.ex("UPDATE agent_sessions SET project_id=?, project_label=? WHERE id=?",
+              (pid, label, s["id"]))
 
 
 def status() -> dict:

@@ -26,8 +26,8 @@ PROJECT_ROOTS = _repo_cfg.get("project_roots", [])
 GH_BIN = _repo_cfg.get("gh_bin", "gh")
 
 # LLM (pi headless) — explicit opt-out possible; journal pipeline already uses it
-LLM = _web_cfg.get("llm", {"enabled": True})
-LLM_ENABLED = bool(LLM.get("enabled", True))
+LLM = _web_cfg.get("llm", {"enabled": False})
+LLM_ENABLED = bool(LLM.get("enabled", False))
 PI_BIN = _repo_cfg.get("pi_bin")
 
 # privacy

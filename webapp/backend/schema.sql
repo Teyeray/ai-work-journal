@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   end_at TEXT,
   status TEXT NOT NULL DEFAULT 'ended',  -- running | ended | stale
   project_id INTEGER,
+  project_label TEXT,
   UNIQUE (source, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_start ON agent_sessions (start_at);

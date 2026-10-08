@@ -16,6 +16,25 @@ case "$CMD" in
   analyze)
     exec python3 "$BASE/analyze.py" "$@"
     ;;
+  web)
+    # start the webapp server (127.0.0.1:8799) and open the browser
+    VENV="$BASE/webapp/.venv/bin/python"
+    if [ ! -x "$VENV" ]; then
+      echo "webapp venv missing — see webapp/README (pip install fastapi uvicorn)" >&2
+      exit 1
+    fi
+    if curl -s --max-time 2 -o /dev/null http://127.0.0.1:8799/api/v1/health; then
+      echo "already running: http://127.0.0.1:8799"
+    else
+      (cd "$BASE/webapp/backend" && setsid "$VENV" -m uvicorn app.api:app --host 127.0.0.1 --port 8799 >/tmp/ai-journal-web.log 2>&1 &)
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 0.5
+        curl -s --max-time 1 -o /dev/null http://127.0.0.1:8799/api/v1/health && break
+      done
+      echo "started: http://127.0.0.1:8799 (log /tmp/ai-journal-web.log)"
+    fi
+    xdg-open http://127.0.0.1:8799 >/dev/null 2>&1 || true
+    ;;
   install)
     mkdir -p "$HOME/.local/bin"
     ln -sfn "$SELF" "$HOME/.local/bin/journal"
@@ -42,6 +61,7 @@ case "$CMD" in
   weekly    生成某天所在周的周报(默认本周)
   dashboard 生成全周期可视化看板并打开
   analyze  LLM 分析某日对话内容与改进建议(默认今天, 带日期参数补分析)
+  web      启动 Web 版交互看板(FastAPI, 127.0.0.1:8799)并打开浏览器
   install   把 journal 装入 ~/.local/bin(全局可用)
   feishu    手动推送一份报告到飞书
   status    查看采集服务与定时任务状态

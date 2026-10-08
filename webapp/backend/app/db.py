@@ -34,6 +34,11 @@ def migrate(conn: sqlite3.Connection) -> None:
             # executescript manages its own transactions; script is idempotent
             conn.executescript(SCHEMA)
             conn.execute("PRAGMA user_version = 1")
+        if v < 2:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(agent_sessions)")}
+            if "project_label" not in cols:
+                conn.execute("ALTER TABLE agent_sessions ADD COLUMN project_label TEXT")
+            conn.execute("PRAGMA user_version = 2")
 
 
 def q(sql, params=()):

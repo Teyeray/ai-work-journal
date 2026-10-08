@@ -202,12 +202,12 @@ def _evidence_points(day_key: str):
     start, end = day_bounds(day_key)
     pts = []
     for r in db.q("SELECT id, source_key, event_type, occurred_at, payload FROM source_events "
-                  "WHERE event_type IN ('git_commit','msg_user','msg_assistant','session_meta') "
+                  "WHERE event_type IN ('git_commit','msg_user','session_meta') "
                   "AND occurred_at >= ? AND occurred_at < ? ORDER BY occurred_at",
                   (start.isoformat(), end.isoformat())):
         p = json.loads(r["payload"])
         kind = {"git_commit": "commit", "msg_user": "agent_user",
-                "msg_assistant": "agent_msg", "session_meta": "session_meta"}[r["event_type"]]
+                "session_meta": "session_meta"}[r["event_type"]]
         pts.append({"id": r["id"], "at": parse_ts(r["occurred_at"]), "kind": kind,
                     "label": (p.get("subject") or p.get("text") or
                               (p.get("parts") and next((x.get("name") for x in p["parts"]

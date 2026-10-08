@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+:root { color-scheme: light; }
+body { @apply bg-neutral-50 text-neutral-800 font-sans; }
+
+.btn { @apply rounded border border-neutral-300 bg-white px-2.5 py-1 text-sm hover:bg-neutral-50 disabled:opacity-40; }
+.btn-primary { @apply rounded bg-neutral-900 px-3 py-1 text-sm text-white hover:bg-neutral-700 disabled:opacity-40; }
+.card { @apply rounded-lg border border-neutral-200 bg-white p-4 shadow-sm; }
+.input { @apply rounded border border-neutral-300 px-2 py-1 text-sm focus:border-neutral-500 focus:outline-none; }
+.badge { @apply rounded-full px-2 py-0.5 text-[11px] bg-neutral-100 text-neutral-600; }
+.link { @apply text-blue-600 hover:underline; }

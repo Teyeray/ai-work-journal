@@ -47,7 +47,7 @@ journal analyze 2026-10-03          # 补某天的对话 LLM 分析(--force 重�
 journal feishu reports/2026-10-05.md # 手动推飞书
 ```
 
-## 可视化看板
+## 可视化看板(静态版)
 
 `journal dashboard` 生成 `reports/dashboard.html`,浏览器直接打开,离线可用:
 
@@ -56,6 +56,31 @@ journal feishu reports/2026-10-05.md # 手动推飞书
 - 对话分析: LLM 生成的当日内容统计与改进建议;每个会话一句话概括+产出,展开看逐轮输入与触及文件
 - 点击柱子或热力图行进入单日;支持 `dashboard.html?day=2026-10-07` 直链
 - 每晚日报流程自动 collect → analyze → 报告 → 刷新看板;白天手动跑 `journal dashboard` 纳入实时数据,`journal analyze <日期>` 补分析
+
+## Web 交互看板(新版)
+
+`journal web` 启动本地 Web 应用(FastAPI + React,仅绑定 127.0.0.1:8799)并打开浏览器:
+
+- 今日: 24h 双泳道时间轴(人类前台块 × 项目配色 / Agent 会话泳道),离开(afk)与未知区间分开标注不重复计数;KPI 条、项目分布、数据质量面板
+- 证据链: 每个时间块可展开看窗口标题、期内证据(commit/用户输入/会话元信息);未知区间可一键标注归属
+- 修正不丢数据: 所有人工修正 append-only 追加(带 anchor),重跑采集/重新投影后仍然生效,可随时撤销
+- 分析: 日期范围内人类/Agent 时长趋势、项目堆叠柱图(ECharts)
+- 会话: 列表+详情,完整对话与工具调用;质量评审按固定 rubric(提示 4×25 + 执行 5 项)打分并给可执行改进建议,评审结果按内容指纹缓存
+- 项目: 自动生成项目列表,优先级/目标为用户所有,重跑不覆盖
+- 实时: SSE 推送采集变更;"同步"按钮增量拉取 ActivityWatch/会话/git 事件(幂等,重复扫描不产生重复事件)
+- LLM 评审默认关闭;开启: `webapp/config.json` 里 `"llm": {"enabled": true}`
+
+技术结构:
+
+```
+webapp/
+  backend/    FastAPI: app/adapters(aw|sessions|git) → SQLite WAL (data/webapp.db)
+              app/timeline.py 投影, app/projects.py 归属, app/reviews.py 评审
+  frontend/   React+TS+Vite+Tailwind+ECharts, 构建产物由后端托管
+  config.json webapp 覆盖配置(llm.enabled 等)
+```
+
+验收要点(已验证): 重复扫描 3 次事件数不变;人工修正撤销后恢复推断值;"跨天事件正确归属;无 ActivityWatch 数据的日期仅显示会话与证据。
 ```
 
 ## 首次配置残留事项
@@ -75,6 +100,7 @@ lark-cli config init --new
 | 项目代码 | ~/Projects/ai-work-journal |
 | journal 命令 | ~/.local/bin/journal (符号链接) |
 | 原始数据/摘要 | data/*.json, data/*.digest.md |
+| Web 看板数据库 | data/webapp.db (webapp 专用,gitignore) |
 | 日报 | reports/*.md |
 | 周报 | reports/weekly/*.md |
 | 可视化看板 | reports/dashboard.html |

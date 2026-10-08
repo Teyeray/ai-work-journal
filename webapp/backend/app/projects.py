@@ -106,6 +106,14 @@ def classify(app: str, title: str) -> str:
     return APP_CAT.get(app.lower(), app)
 
 
+def ensure_project(name: str) -> None:
+    """Idempotently create a stub projects row for a label in use."""
+    if not name or is_category(name):
+        return
+    db.ex("INSERT OR IGNORE INTO projects(name, created_at, updated_at) VALUES(?,?,?)",
+          (name, iso(now_utc()), iso(now_utc())))
+
+
 def resolve_project_id(label: str):
     """Map a heuristic label to a projects row, creating stub rows lazily."""
     if not label:

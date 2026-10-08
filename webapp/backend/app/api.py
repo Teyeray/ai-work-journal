@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, db, ingest, timeline, projects
+from . import config, db, ingest, timeline, projects, reviews
 from .adapters import sessions as sessions_mod
 from .timeutil import day_bounds, local_day_key, now_utc, parse_ts, tz
 
@@ -55,6 +55,38 @@ def sync_now():
     return sync_all()
 
 
+# ---------------- projection cache ----------------
+
+import hashlib as _hl
+
+
+def _day_fingerprint(day: str) -> str:
+    """Change-detect: max event id + overrides touching the day."""
+    mx = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM source_events WHERE day_key=?", (day,))
+    # events stored on the previous day can cross midnight into this day
+    prev = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM source_events WHERE day_key=?",
+                 ((dt.date.fromisoformat(day) - dt.timedelta(days=1)).isoformat(),))
+    ov = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM manual_overrides "
+               "WHERE day_key=? AND superseded_by IS NULL", (day,))["m"]
+    return f"{mx['m']}|{prev['m']}|{ov}|v3"
+
+
+def cached_timeline(day: str) -> dict:
+    fp = _day_fingerprint(day)
+    row = db.q1("SELECT metrics_json FROM daily_projections WHERE day_key=? AND "
+                "input_fingerprint=?", (day, fp))
+    if row:
+        return json.loads(row["metrics_json"])
+    t = timeline.day_timeline(day)
+    for label in {b["project"] for b in t["blocks"]} | {a["project"] for a in t["agent"]}:
+        projects.ensure_project(label)
+    db.ex("DELETE FROM daily_projections WHERE day_key=?", (day,))
+    db.ex("INSERT INTO daily_projections(day_key,projection_version,"
+          "input_fingerprint,metrics_json,updated_at) VALUES(?,?,?,?,?)",
+          (day, 1, fp, json.dumps(t, ensure_ascii=False), now_utc().isoformat()))
+    return t
+
+
 # ---------------- days ----------------
 
 def _valid_day(day_key: str) -> str:
@@ -74,7 +106,7 @@ def days():
 @app.get("/api/v1/timeline")
 def get_timeline(day: str, project: str = None):
     day = _valid_day(day)
-    t = timeline.day_timeline(day)
+    t = cached_timeline(day)
     if project:
         t["blocks"] = [b for b in t["blocks"] if b["project"] == project]
     t["revision"] = _STATE["revision"]
@@ -85,7 +117,7 @@ def get_timeline(day: str, project: str = None):
 def get_today(day: str):
     """KPI strip + allocations + data quality for the Today page."""
     day = _valid_day(day)
-    t = timeline.day_timeline(day)
+    t = cached_timeline(day)
     alloc = {}
     for b in t["blocks"]:
         alloc[b["project"]] = alloc.get(b["project"], 0) + (
@@ -214,13 +246,11 @@ def session_detail(sid: int):
                                  if x.get("kind") == "tool_call"],
                        "tool_results": p.get("tool_results") or [],
                        "usage": p.get("usage"), "model": p.get("model")})
-    review = db.q1("SELECT * FROM session_reviews WHERE session_id=? ORDER BY id DESC",
-                   (sid,))
     return {"id": r["id"], "agent": r["source"], "cwd": r["cwd"],
             "project": projects.classify_for_session(r["cwd"]),
             "start_at": r["start_at"], "end_at": r["end_at"], "status": r["status"],
             "events": events,
-            "review": (dict(review) if review else {"status": "unreviewed"})}
+            "review": reviews.get_review(sid)}
 
 
 # ---------------- corrections (append-only, never auto-overwritten) ----------------
@@ -286,6 +316,35 @@ def list_overrides(day: str = None):
     return {"overrides": [dict(r) for r in rows]}
 
 
+# ---------------- session review (LLM-gated) ----------------
+
+@app.post("/api/v1/sessions/{sid}/review")
+def session_review(sid: int):
+    r = reviews.run_review(sid)
+    if r.get("status") == "analyzed":
+        bump_revision()
+    return r
+
+
+@app.post("/api/v1/reviews/feedback")
+def review_feedback(body: dict):
+    sid = body.get("session_id")
+    if not isinstance(sid, int):
+        raise HTTPException(400, "session_id required")
+    rating = body.get("rating") or ""
+    if rating not in ("helpful", "partially", "not_helpful", "wrong"):
+        raise HTTPException(400, "bad rating")
+    rev = db.q1("SELECT id FROM session_reviews WHERE session_id=? AND status='analyzed' "
+                "ORDER BY id DESC", (sid,))
+    if not rev:
+        raise HTTPException(404, "no analyzed review for this session")
+    db.ex("INSERT INTO review_feedback(review_id,category,note,created_at) "
+          "VALUES(?,?,?,?)", (rev["id"], rating,
+                              str(body.get("comment") or "")[:500],
+                              now_utc().isoformat()))
+    return {"ok": True}
+
+
 # ---------------- projects ----------------
 
 class ProjectIn(BaseModel):
@@ -344,7 +403,7 @@ def analytics_time(start: str, end: str):
     out = []
     d = d0
     while d <= d1:
-        t = timeline.day_timeline(d.isoformat())
+        t = cached_timeline(d.isoformat())
         m = t["metrics"]
         alloc = {}
         for b in t["blocks"]:
