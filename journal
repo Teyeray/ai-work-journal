@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ai-work-journal convenience CLI
 set -euo pipefail
-BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+BASE="$(cd "$(dirname "$SELF")" && pwd)"
 CMD="${1:-help}"
 shift || true
 case "$CMD" in
@@ -11,6 +12,11 @@ case "$CMD" in
   dashboard)
     python3 "$BASE/dashboard.py" "$@"
     xdg-open "$BASE/reports/dashboard.html" >/dev/null 2>&1 || true
+    ;;
+  install)
+    mkdir -p "$HOME/.local/bin"
+    ln -sfn "$SELF" "$HOME/.local/bin/journal"
+    echo "installed: ~/.local/bin/journal -> $SELF"
     ;;
   feishu)  exec python3 "$BASE/feishu.py" "$@" ;;
   status)
@@ -31,7 +37,8 @@ case "$CMD" in
   collect   采集某天原始数据(默认今天)
   daily     生成某天日报(缺数据时自动先采集, 完成后推送飞书)
   weekly    生成某天所在周的周报(默认本周)
-  dashboard 生成全周期可视化看板 reports/dashboard.html
+  dashboard 生成全周期可视化看板并打开
+  install   把 journal 装入 ~/.local/bin(全局可用)
   feishu    手动推送一份报告到飞书
   status    查看采集服务与定时任务状态
 
