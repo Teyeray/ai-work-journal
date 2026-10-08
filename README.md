@@ -17,11 +17,12 @@
   飞书(lark-cli 用户身份)      当天会话消息、收发文件及内容预览
 
 流水线
-  collect.py    采集某天数据 → data/<date>.json(含小时分布/项目归属/token) + data/<date>.digest.md
-  daily.py      digest → pi 无头总结 → reports/<date>.md → 推飞书 → 刷新看板
+  collect.py    采集某天数据 → data/<date>.json(含小时分布/项目归属/token/逐轮对话) + data/<date>.digest.md
+  analyze.py    会话记录 → pi 无头分析 → 写回 data/<date>.json 的 analysis 字段(每会话概括/产出/统计/改进建议)
+  daily.py     collect → analyze → pi 总结 → reports/<date>.md → 推飞书 → 刷新看板
   weekly.py     7 天日报 → pi 总结 → reports/weekly/<isoyear>-W<ww>.md → 推飞书
-  dashboard.py  汇总全部 data/*.json → reports/dashboard.html(离线交互看板)
-  feishu.py     markdown 导入飞书为 docx(lark-cli 未授权时自动跳过)
+  dashboard.py 汇总全部 data/*.json → reports/dashboard.html(离线交互看板)
+  feishu.py    markdown 导入飞书为 docx(lark-cli 未授权时自动跳过)
 
 模板
   templates/daily.md      日报模板+提示词(百度文库/飞书模板中心标准结构)
@@ -42,6 +43,7 @@ journal daily                        # 立即生成今天日报
 journal daily 2026-10-03             # 补生成某天
 journal weekly                       # 生成本周周报
 journal dashboard                    # 刷新可视化看板并打开浏览器
+journal analyze 2026-10-03          # 补某天的对话 LLM 分析(--force 重跑)
 journal feishu reports/2026-10-05.md # 手动推飞书
 ```
 
@@ -49,11 +51,11 @@ journal feishu reports/2026-10-05.md # 手动推飞书
 
 `journal dashboard` 生成 `reports/dashboard.html`,浏览器直接打开,离线可用:
 
-- 总览: 每日时长趋势、项目堆叠、时段热力图(小时×日期)、项目占比、token 消耗(按模型)、会话数、工程产出
-- 单日: 24h 时间线(前台项目分段 + agent 会话轨道 + 提交/飞书事件点)、小时明细、会话统计表
-- 会话内容: 逐个会话展开,看每轮人工输入原文、涉及文件、工具调用——当天到底跟 agent 谈了什么
+- 总览: 每日时长趋势、项目堆叠、时段热力图(小时×日期)、项目占比、token 消耗(按模型)、会话数、工程产出、最近 7 天对话分析摘要
+- 单日: 顶部可任选日期(前/后一天、下拉);24h 时间线、小时明细、会话统计表
+- 对话分析: LLM 生成的当日内容统计与改进建议;每个会话一句话概括+产出,展开看逐轮输入与触及文件
 - 点击柱子或热力图行进入单日;支持 `dashboard.html?day=2026-10-07` 直链
-- 每晚日报生成后自动刷新;白天手动跑 `journal dashboard` 可纳入当天实时数据
+- 每晚日报流程自动 collect → analyze → 报告 → 刷新看板;白天手动跑 `journal dashboard` 纳入实时数据,`journal analyze <日期>` 补分析
 ```
 
 ## 首次配置残留事项

@@ -49,6 +49,14 @@ def main():
     if not digest.exists():
         print(f"no digest for {d}, abort")
         sys.exit(1)
+    # best-effort LLM analysis of the day's conversations (dashboard section)
+    try:
+        an = subprocess.run([sys.executable, str(BASE / "analyze.py"), d.isoformat()],
+                            capture_output=True, text=True, timeout=1200)
+        if an.stdout.strip():
+            print(an.stdout.strip())
+    except Exception as e:
+        print(f"analysis skipped: {e}")
     report_path = REPORTS / f"{d.isoformat()}.md"
     prompt = PROMPT.replace("{date}", d.isoformat())
     try:

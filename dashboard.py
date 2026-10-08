@@ -53,8 +53,11 @@ def compact_day(j):
             "t": [{"t": x["title"], "d": x["duration"]} for x in h.get("titles") or []],
             "p": h.get("proj") or {},
         }
+    an = j.get("analysis") or {}
+    an_by_file = {x["file"]: x for x in (an.get("sessions") or []) if isinstance(x, dict)}
     sessions = []
     for s in j.get("agent_sessions") or []:
+        a = an_by_file.get(s.get("file")) or {}
         sessions.append({
             "g": s["agent"], "p": proj_of(s.get("cwd")),
             "k": (s.get("task") or "").replace("\n", " ")[:140],
@@ -65,6 +68,8 @@ def compact_day(j):
             "tl": sorted((s.get("tools") or {}).items(), key=lambda kv: -kv[1])[:5],
             "tn": s.get("turns") or [],
             "fl": [shorten_path(f) for f in (s.get("files") or [])[:8]],
+            "sm": (a.get("sum") or "")[:60],
+            "so": (a.get("out") or "")[:60],
         })
     sessions.sort(key=lambda s: s["t0"])
     commits = []
@@ -109,6 +114,8 @@ def compact_day(j):
             "projects": aw.get("projects") or {},
         },
         "sessions": sessions,
+        "an": {"st": (an.get("stats") or "")[:300],
+               "ad": [str(x)[:80] for x in (an.get("advice") or [])[:6]]},
         "commits": commits,
         "gh": {
             "prc": len(prs), "prm": sum(1 for p in prs if p.get("state") == "merged"),
