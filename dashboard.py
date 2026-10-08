@@ -37,6 +37,13 @@ def hm(iso):
     return t.strftime("%H:%M")
 
 
+def shorten_path(p):
+    p = p.replace("/home/yangrm", "~")
+    if len(p) > 70:
+        p = "~…" + p[-67:]
+    return p
+
+
 def compact_day(j):
     aw = j.get("activitywatch") or {}
     hours = {}
@@ -56,6 +63,8 @@ def compact_day(j):
             "u": s.get("user_msgs", 0), "a": s.get("assistant_msgs", 0),
             "tok": s.get("tokens") or {},
             "tl": sorted((s.get("tools") or {}).items(), key=lambda kv: -kv[1])[:5],
+            "tn": s.get("turns") or [],
+            "fl": [shorten_path(f) for f in (s.get("files") or [])[:8]],
         })
     sessions.sort(key=lambda s: s["t0"])
     commits = []

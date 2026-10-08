@@ -283,6 +283,23 @@ def add_tokens(s, model, u):
     t["msgs"] += 1
 
 
+def turn_ok(txt):
+    """Filter system-injected pseudo user messages from the turn list."""
+    return not txt.startswith(("<command", "<local-command", "Caveat:", "[Request interrupted"))
+
+
+def dedup_turns(turns, cap=12):
+    """Drop consecutive/resume duplicates, then cap."""
+    seen, out = set(), []
+    for t in turns:
+        k = (t["t"], t["x"])
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(t)
+    return out[:cap]
+
+
 def collect_claude(start, end):
     root = Path(CFG["claude_dir"])
     sessions = []
@@ -298,7 +315,7 @@ def collect_claude(start, end):
             continue
         s = {"agent": "claude-code", "file": str(f), "cwd": "", "task": None,
              "user_msgs": 0, "assistant_msgs": 0, "tools": {}, "files": set(),
-             "first": None, "last": None}
+             "first": None, "last": None, "turns": []}
         try:
             with f.open(encoding="utf-8", errors="replace") as fh:
                 for line in fh:
@@ -322,6 +339,11 @@ def collect_claude(start, end):
                                 s["user_msgs"] += 1
                                 if s["task"] is None:
                                     s["task"] = txt
+                                if turn_ok(txt) and ts is not None:
+                                    s["turns"].append({
+                                        "t": ts.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                                        "x": txt.replace("\n", " ")[:160],
+                                    })
                     elif t == "assistant":
                         s["assistant_msgs"] += 1
                         msg = d.get("message") or {}
@@ -342,6 +364,7 @@ def collect_claude(start, end):
         if s["first"] is not None:
             s["span"] = round((s["last"] - s["first"]).total_seconds())
             s["files"] = sorted(s["files"])[:15]
+            s["turns"] = dedup_turns(s["turns"])
             sessions.append(s)
     return sessions
 
@@ -360,7 +383,7 @@ def collect_pi(start, end):
             continue
         s = {"agent": "pi", "file": str(f), "cwd": "", "task": None,
              "user_msgs": 0, "assistant_msgs": 0, "tools": {}, "files": set(),
-             "first": None, "last": None}
+             "first": None, "last": None, "turns": []}
         if not s["cwd"]:
             s["cwd"] = cwd_from_dir(f.parent.name)
         try:
@@ -385,14 +408,31 @@ def collect_pi(start, end):
                             s["user_msgs"] += 1
                             if s["task"] is None:
                                 s["task"] = txt
+                            if turn_ok(txt) and ts is not None:
+                                s["turns"].append({
+                                    "t": ts.astimezone(LOCAL_TZ).strftime("%H:%M"),
+                                    "x": txt.replace("\n", " ")[:160],
+                                })
                         elif role == "assistant" and msg.get("content"):
                             s["assistant_msgs"] += 1
                             add_tokens(s, msg.get("model"), msg.get("usage"))
+                            if isinstance(msg.get("content"), list):
+                                for part in msg["content"]:
+                                    if not (isinstance(part, dict) and part.get("type") == "toolCall"):
+                                        continue
+                                    name = part.get("name") or "?"
+                                    s["tools"][name] = s["tools"].get(name, 0) + 1
+                                    args = part.get("arguments") or {}
+                                    for key in ("path", "file_path", "notebook_path"):
+                                        p = args.get(key)
+                                        if isinstance(p, str):
+                                            s["files"].add(p)
         except OSError:
             continue
         if s["first"] is not None:
             s["span"] = round((s["last"] - s["first"]).total_seconds())
             s["files"] = sorted(s["files"])[:15]
+            s["turns"] = dedup_turns(s["turns"])
             sessions.append(s)
     return sessions
 

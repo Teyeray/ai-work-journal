@@ -37,12 +37,12 @@
 ## 日常使用
 
 ```bash
-~/Documents/projects/ai-work-journal/journal status   # 看服务/定时器/最近报告
-journal daily                                        # 立即生成今天日报
-journal daily 2026-10-03                             # 补生成某天
-journal weekly                                       # 生成本周周报
-journal dashboard                                    # 刷新可视化看板
-journal feishu reports/2026-10-05.md                 # 手动推飞书
+journal status                        # 看服务/定时器/最近报告(journal 已装到 ~/.local/bin)
+journal daily                        # 立即生成今天日报
+journal daily 2026-10-03             # 补生成某天
+journal weekly                       # 生成本周周报
+journal dashboard                    # 刷新可视化看板并打开浏览器
+journal feishu reports/2026-10-05.md # 手动推飞书
 ```
 
 ## 可视化看板
@@ -50,7 +50,8 @@ journal feishu reports/2026-10-05.md                 # 手动推飞书
 `journal dashboard` 生成 `reports/dashboard.html`,浏览器直接打开,离线可用:
 
 - 总览: 每日时长趋势、项目堆叠、时段热力图(小时×日期)、项目占比、token 消耗(按模型)、会话数、工程产出
-- 单日: 24h 时间线(前台项目分段 + agent 会话轨道 + 提交/飞书事件点)、小时明细、会话列表(任务/token/工具)、飞书搞录
+- 单日: 24h 时间线(前台项目分段 + agent 会话轨道 + 提交/飞书事件点)、小时明细、会话统计表
+- 会话内容: 逐个会话展开,看每轮人工输入原文、涉及文件、工具调用——当天到底跟 agent 谈了什么
 - 点击柱子或热力图行进入单日;支持 `dashboard.html?day=2026-10-07` 直链
 - 每晚日报生成后自动刷新;白天手动跑 `journal dashboard` 可纳入当天实时数据
 ```
@@ -69,7 +70,8 @@ lark-cli config init --new
 
 | 内容 | 路径 |
 |---|---|
-| 项目代码 | ~/Documents/projects/ai-work-journal |
+| 项目代码 | ~/Projects/ai-work-journal |
+| journal 命令 | ~/.local/bin/journal (符号链接) |
 | 原始数据/摘要 | data/*.json, data/*.digest.md |
 | 日报 | reports/*.md |
 | 周报 | reports/weekly/*.md |

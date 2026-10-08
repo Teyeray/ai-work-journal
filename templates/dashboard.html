@@ -58,6 +58,18 @@
          padding: 8px 11px; border-radius: 8px; font-size: 12px; max-width: 360px;
          pointer-events: none; z-index: 99; line-height: 1.55; }
   #tip b { color: #e2e8f0; }
+  .fl { color: #64748b; margin-top: 6px; word-break: break-all; font-size: 11.5px; }
+  .sesswrap { max-height: 620px; overflow-y: auto; padding-right: 4px; }
+  details.sess { border: 1px solid #f1f5f9; border-radius: 8px; margin-bottom: 6px; }
+  details.sess summary { cursor: pointer; padding: 7px 10px; font-size: 12.5px;
+                         list-style: none; user-select: none; }
+  details.sess summary::-webkit-details-marker { display: none; }
+  details.sess summary::before { content: "▸ "; color: #94a3b8; }
+  details.sess[open] summary::before { content: "▾ "; }
+  .sessbody { padding: 2px 10px 10px 26px; }
+  .turn { font-size: 12.5px; margin-bottom: 5px; line-height: 1.5; }
+  .turn .tm { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #64748b;
+              margin-right: 8px; font-size: 11.5px; }
   footer { max-width: 1240px; margin: 0 auto; padding: 0 22px 30px; color: #94a3b8; font-size: 11.5px; }
 </style>
 </head>
@@ -458,7 +470,7 @@ function renderDay() {
   kpi(p, String(d.fs.n) + " (我发 " + d.fs.me + ")", "飞书消息");
   kpi(p, String((d.fs.files || []).length), "飞书文件");
   dvGrid.innerHTML = ""; dvCols.innerHTML = "";
-  dayTimeline(d); hourTable(d); sessionTable(d); dayLists(d);
+  dayTimeline(d); hourTable(d); sessionTable(d); sessionContent(d); dayLists(d);
 }
 document.getElementById("dPrev").onclick = function () { gotoDay(cur - 1); };
 document.getElementById("dNext").onclick = function () { gotoDay(cur + 1); };
@@ -569,6 +581,38 @@ function sessionTable(d) {
       "</td><td>" + tokStr + "</td><td class='sm'>" + (s.tl.map(function (t) { return esc(t[0]) + "×" + t[1]; }).join(", ") || "—") + "</td></tr>");
   });
   c.appendChild(tb);
+}
+
+function sessionContent(d) {
+  const c = card(dvGrid, "会话内容(逐条展开, 每轮输入与触及文件)", true);
+  if (!d.sessions.length) { c.insertAdjacentHTML("beforeend", "<div class='mut sm'>无。</div>"); return; }
+  const wrap = document.createElement("div"); wrap.className = "sesswrap";
+  d.sessions.forEach(function (s) {
+    const det = document.createElement("details"); det.className = "sess";
+    const sum = document.createElement("summary");
+    sum.innerHTML = "<b>" + s.t0 + "–" + s.t1 + "</b> " + (s.g === "pi" ? "🔵 pi" : "🟠 claude") +
+      " · " + esc(s.p) + " · 消息 " + s.u + "/" + s.a + " · " + fmtTok(sTok(s)) + " tok" +
+      (s.tn.length ? "" : " · <span class='mut'>无人工输入</span>");
+    det.appendChild(sum);
+    const body = document.createElement("div"); body.className = "sessbody";
+    if (s.tn.length) {
+      s.tn.forEach(function (t) {
+        const row = document.createElement("div"); row.className = "turn";
+        row.innerHTML = "<span class='tm'>" + t.t + "</span>" + esc(t.x);
+        body.appendChild(row);
+      });
+      if (s.u > s.tn.length) body.insertAdjacentHTML("beforeend",
+        "<div class='mut sm'>…另有 " + (s.u - s.tn.length) + " 条输入未展示</div>");
+    } else {
+      body.innerHTML = "<div class='mut sm'>自动会话, 无人工输入记录。</div>";
+    }
+    if (s.fl && s.fl.length) {
+      body.insertAdjacentHTML("beforeend", "<div class='fl'>📄 " + s.fl.map(esc).join(" · ") + "</div>");
+    }
+    det.appendChild(body);
+    wrap.appendChild(det);
+  });
+  c.appendChild(wrap);
 }
 
 function dayLists(d) {

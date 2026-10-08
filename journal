@@ -8,7 +8,10 @@ case "$CMD" in
   collect) exec python3 "$BASE/collect.py" "$@" ;;
   daily)   exec python3 "$BASE/daily.py" "$@" ;;
   weekly)  exec python3 "$BASE/weekly.py" "$@" ;;
-  dashboard) exec python3 "$BASE/dashboard.py" "$@" ;;
+  dashboard)
+    python3 "$BASE/dashboard.py" "$@"
+    xdg-open "$BASE/reports/dashboard.html" >/dev/null 2>&1 || true
+    ;;
   feishu)  exec python3 "$BASE/feishu.py" "$@" ;;
   status)
     echo "== services =="
