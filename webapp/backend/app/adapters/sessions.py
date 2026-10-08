@@ -174,7 +174,15 @@ def scan(source: str) -> dict:
             cur = cursors.get(key) or {}
             offset = int(cur.get("offset", 0))
             fsize = st.st_size
-            if fsize < offset:  # truncated/rotated: rescan whole file
+            if fsize < offset:
+                # truncated/rotated: drop stale events for this file, rescan whole
+                stale = db.q("SELECT day_key FROM source_events WHERE source_key=? "
+                             "AND json_extract(payload,'$.file')=?", (prefix, str(f)))
+                for sr in stale:
+                    if sr["day_key"]:
+                        affected_days.add(sr["day_key"])
+                db.ex("DELETE FROM source_events WHERE source_key=? "
+                      "AND json_extract(payload,'$.file')=?", (prefix, str(f)))
                 offset = 0
             if fsize == offset and fsize > 0:
                 # no new bytes; still check running status
@@ -235,6 +243,12 @@ def scan(source: str) -> dict:
 def _refresh_sessions(source: str, running_files: list):
     """(Re)build agent_sessions rows from stored events of this source."""
     prefix = f"sessions:{source}"
+    # prune links to deleted events and sessions whose file no longer has events
+    db.ex("DELETE FROM session_event_links WHERE event_id NOT IN (SELECT id "
+          "FROM source_events)")
+    db.ex("DELETE FROM agent_sessions WHERE source=? AND external_id NOT IN "
+          "(SELECT DISTINCT json_extract(payload,'$.file') FROM source_events "
+          "WHERE source_key=?)", (source, prefix))
     rows = db.q("SELECT id, event_type, occurred_at, payload FROM source_events "
                 "WHERE source_key=? ORDER BY occurred_at", (prefix,))
     by_file = {}

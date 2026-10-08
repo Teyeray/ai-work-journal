@@ -178,16 +178,13 @@ def evidence(event_id: int):
             "occurred_at": r["occurred_at"], "payload": p}
 
 
-SECRET_PATTERNS = [
-    ("sk-ant", 24), ("ghp_", 36), ("gho_", 36), ("sk_", 30),
-    ("AKIA", 20), ("AIza", 35), ("xoxb-", 30),
-]
+SECRET_PATTERNS = ["sk-ant", "ghp_", "gho_", "sk_", "AKIA", "AIza", "xoxb-"]
 
 
 def _redact(text: str) -> str:
     import re
-    for prefix, ln in SECRET_PATTERNS:
-        text = re.sub(re.escape(prefix) + r"[A-Za-z0-9_\-]{%d}" % (ln - len(prefix)),
+    for prefix in SECRET_PATTERNS:
+        text = re.sub(re.escape(prefix) + r"[A-Za-z0-9_\-]{8,}",
                       prefix + "***REDACTED***", text)
     return text
 

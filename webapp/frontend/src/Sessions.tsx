@@ -172,7 +172,18 @@ function SessionPane({ detail }: { detail: SessionDetail }) {
               <div>
                 <div className="mb-1 text-xs font-medium">改进建议</div>
                 <ul className="list-decimal space-y-1 pl-5 text-xs">
-                  {review.suggestions.map((s, i) => <li key={i}>{s}</li>)}
+                  {review.suggestions.map((s, i) => (
+                    <li key={i} className="group flex items-start gap-2">
+                      <span className="flex-1">{s}</span>
+                      <button
+                        className="btn shrink-0 px-1.5 py-0 text-[10px] opacity-60 group-hover:opacity-100"
+                        title="复制这条建议"
+                        onClick={() => navigator.clipboard?.writeText(s)}
+                      >
+                        复制
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             ) : null}
