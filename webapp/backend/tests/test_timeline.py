@@ -111,3 +111,20 @@ def test_override_survives_reprojection(env):
     db.ex("UPDATE manual_overrides SET superseded_by=? WHERE id=?", (tomb["id"], ov["id"]))
     t3 = timeline.day_timeline(D)
     assert t3["blocks"][0]["project"] == inferred
+
+
+def test_window_visits_second_precision_and_join(env):
+    """Raw windows survive merging: same window split by a tiny gap joins,
+    a different window starts a new visit; visits carry the block project."""
+    load_aw([
+        {"event_type": "aw_window", "occurred_at": f"{D}T09:00:00+08:00",
+         "payload": json.dumps({"duration": 30, "data": {"app": "google-chrome", "title": "ChatGPT"}})},
+        {"event_type": "aw_window", "occurred_at": f"{D}T09:00:33+08:00",
+         "payload": json.dumps({"duration": 20, "data": {"app": "google-chrome", "title": "ChatGPT"}})},
+        {"event_type": "aw_window", "occurred_at": f"{D}T09:00:53+08:00",
+         "payload": json.dumps({"duration": 40, "data": {"app": "zotero", "title": "rsi survey paper"}})},
+    ])
+    w = timeline.day_timeline(D)["windows"]
+    assert [(v["app"], v["title"]) for v in w] == [("google-chrome", "ChatGPT"), ("zotero", "rsi survey paper")]
+    assert w[0]["start"].endswith("09:00:00+08:00") and w[0]["end"].endswith("09:00:53+08:00")
+    assert w[1]["project"] == "RSI"

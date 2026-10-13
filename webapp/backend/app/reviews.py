@@ -99,9 +99,9 @@ def run_review(sid: int) -> dict:
     if not text.strip():
         return {"status": "error", "message": "empty session"}
 
-    if not config.LLM_ENABLED:
+    if not available():
         return {"status": "llm_disabled",
-                "message": "LLM 评审未启用 (webapp/config.json llm.enabled)"}
+                "message": "没有可用的 LLM:配置百炼密钥(~/.config/ai-work-journal/.env)或在 webapp/config.json 打开 llm.enabled"}
 
     # cached by fingerprint?
     row = db.q1("SELECT * FROM session_reviews WHERE session_id=? AND "
@@ -111,7 +111,7 @@ def run_review(sid: int) -> dict:
 
     _record(sid, fingerprint, "pending", None)
     try:
-        out = _call_pi(text)
+        out = _call_openai(text) if config.LLM_CLASSIFY_ENABLED else _call_pi(text)
         scores = _parse(out)
         if not scores:
             _record(sid, fingerprint, "failed", None, error="unparseable LLM output")
@@ -131,6 +131,24 @@ def _record(sid, fp, status, scores, error=None):
           (sid, ANALYZER_VERSION, fp, status,
            json.dumps(scores, ensure_ascii=False) if scores else None,
            str(error or "")[:300], now_utc().isoformat()))
+
+
+def available() -> bool:
+    """Reviews run on the OpenAI-compatible endpoint when configured, else local pi."""
+    return bool(config.LLM_CLASSIFY_ENABLED or config.LLM_ENABLED)
+
+
+def _call_openai(text: str) -> str:
+    import urllib.request
+    body = {"model": config.LLM_CLASSIFY.get("review_model") or config.LLM_CLASSIFY["model"],
+            "temperature": 0, "enable_thinking": False,
+            "messages": [{"role": "system", "content": "评审文件中的会话,严格按给定 schema 输出一个 JSON 对象,不要其他内容。"},
+                         {"role": "user", "content": PROMPT + text}]}
+    req = urllib.request.Request(config.LLM_BASE_URL + "/chat/completions", json.dumps(body).encode(),
+                                 {"Authorization": f"Bearer {config.LLM_API_KEY}",
+                                  "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        return json.load(resp)["choices"][0]["message"]["content"]
 
 
 def _call_pi(text: str) -> str:

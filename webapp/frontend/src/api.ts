@@ -12,10 +12,12 @@ export interface Block {
   is_manual_override: boolean;
   n_events: number;
   titles: string[];
+  attributed_by?: string | null;
 }
 
 export interface AgentLane {
   id: number;
+  subagent: boolean;
   agent: string;
   cwd: string;
   project: string;
@@ -34,6 +36,29 @@ export interface EvidencePoint {
   kind: string;
   label: string;
   source: string;
+  repo?: string;
+  project?: string;
+  session_id?: number;
+}
+
+export interface Episode {
+  start: string;
+  end: string;
+  label: string;
+  is_category: boolean;
+  activity: string;
+  summary: string;
+  human_sec: number;
+  share: number;
+  mix: { label: string; sec: number }[];
+  switches: number;
+  sessions: { id: number; agent: string; project: string; exec_sec: number }[];
+  n_sessions: number;
+  agents_by_project: Record<string, number>;
+  prompts: { at: string; text: string; session_id: number }[];
+  n_prompts: number;
+  commits: { at: string; repo: string; subject: string; project: string }[];
+  titles: string[];
 }
 
 export interface Interval {
@@ -41,10 +66,22 @@ export interface Interval {
   end: string;
 }
 
+export interface WindowVisit {
+  start: string;
+  end: string;
+  app: string;
+  title: string;
+  project: string;
+  activity: string;
+  reason?: string;
+}
+
 export interface Timeline {
   day_key: string;
   timezone: string;
   blocks: Block[];
+  episodes: Episode[];
+  windows: WindowVisit[];
   agent: AgentLane[];
   evidence: EvidencePoint[];
   unknown: Interval[];
@@ -60,6 +97,8 @@ export interface Timeline {
     agent_runtime_sec: number;
     agent_runtime_union_sec: number;
     agent_exec_sec: number;
+    agent_exec_union_sec: number;
+    agent_peak_parallel: number;
     unknown_sec: number;
     evidence_count: number;
   };
@@ -84,6 +123,7 @@ export interface Insight {
 export interface CommitItem {
   at: string;
   repo: string;
+  project?: string;
   subject: string;
   sha: string;
 }
@@ -111,10 +151,35 @@ export interface SessionRow {
   agent: string;
   cwd: string;
   project: string;
+  project_reason: string;
   start_at: string;
   end_at: string;
   status: string;
   n_events: number;
+  title: string | null;
+  subagent: boolean;
+  parent_id?: number | null;
+  children: number[];
+  prompts: number;
+  tools: number;
+  tokens: number;
+  models: string[];
+  exec_sec: number;
+  /** activity inside the listed date range (list endpoint with a day only) */
+  range?: { first_at: string | null; last_at: string | null; prompts: number; exec_sec: number; last_prompt: string | null };
+  /** opened before the range and still going into it */
+  carried?: boolean;
+}
+
+export interface ScreenStatus {
+  state: "ok" | "stalled" | "down" | "off";
+  last_frame?: string | null;
+  monitors?: string[];
+  reason?: string;
+  hint?: string;
+  day_frames?: number;
+  restartable?: boolean;
+  awaiting_approval?: boolean;
 }
 
 export interface SessionEvent {
@@ -129,21 +194,41 @@ export interface SessionEvent {
   model?: string;
 }
 
-export interface SessionDetail {
-  id: number;
-  agent: string;
-  cwd: string;
-  project: string;
-  start_at: string;
-  end_at: string;
-  status: string;
+export interface SessionDetail extends SessionRow {
   events: SessionEvent[];
   review: Record<string, unknown>;
+  review_available: boolean;
+}
+
+export interface ProjectRules {
+  aliases: string[];
+  paths: string[];
+  patterns: string[];
+  parent: string | null;
+  ignore: boolean;
+}
+
+export interface UnclassifiedWindow {
+  app: string; title: string; category: string; reason: string; sec: number; n: number;
+}
+
+export interface RulePreview {
+  windows: number; sec: number; from: Record<string, number>; samples: { title: string; sec: number }[];
+}
+
+export interface LlmStatus {
+  enabled: boolean; running: boolean; done: number; total: number; labelled: number;
+  model: string; error: string | null;
+  last_run: { titles: number; labelled: number; at: string } | null;
 }
 
 export interface Project {
   id: number;
   name: string;
+  active: number;
+  rules: ProjectRules;
+  discovered: boolean;
+  recent_sec?: number;
   priority: number;
   goals_json: string | null;
   rules_json: string | null;
@@ -186,7 +271,8 @@ export interface Review {
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
-    throw new Error((body as { message?: string }).message || `HTTP ${r.status}`);
+    const b = body as { message?: string; detail?: unknown };
+    throw new Error(b.message || (typeof b.detail === "string" ? b.detail : "") || `HTTP ${r.status}`);
   }
   return r.json() as Promise<T>;
 }
@@ -239,7 +325,19 @@ export const api = {
       j<{ ok: boolean }>(r),
     ),
   projects: () =>
-    fetch("/api/v1/projects").then((r) => j<{ projects: Project[] }>(r)),
+    fetch("/api/v1/projects").then((r) => j<{ projects: Project[]; categories: string[] }>(r)),
+  unclassified: (days = 14) =>
+    fetch(`/api/v1/classify/unclassified?days=${days}`).then((r) =>
+      j<{ days: number; windows: UnclassifiedWindow[] }>(r)),
+  previewRule: (body: { project: string; kind: string; value: string; days?: number }) =>
+    fetch("/api/v1/classify/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }).then((r) => j<RulePreview>(r)),
+  llmStatus: () => fetch("/api/v1/classify/llm").then((r) => j<LlmStatus>(r)),
+  llmRun: () => fetch("/api/v1/classify/llm/run", { method: "POST" }).then((r) => j<LlmStatus>(r)),
+  explain: (title: string, app = "google-chrome") =>
+    fetch(`/api/v1/classify/explain?title=${encodeURIComponent(title)}&app=${encodeURIComponent(app)}`)
+      .then((r) => j<{ label: string; reason: string; is_category: boolean }>(r)),
   patchProject: (id: number, body: Record<string, unknown>) =>
     fetch(`/api/v1/projects/${id}`, {
       method: "PATCH",
@@ -252,6 +350,10 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => j<{ ok: boolean }>(r)),
+  screenStatus: (day?: string) =>
+    fetch(`/api/v1/screen/status${day ? `?day=${day}` : ""}`).then((r) => j<ScreenStatus>(r)),
+  screenRestart: () =>
+    fetch("/api/v1/screen/restart", { method: "POST" }).then((r) => j<{ ok: boolean }>(r)),
   analyticsTime: (start: string, end: string) =>
     fetch(`/api/v1/analytics/time?start=${start}&end=${end}`).then((r) =>
       j<{
@@ -296,10 +398,69 @@ export const AGENT_COLORS: Record<string, string> = {
   "claude-code": "#E8862E",
 };
 
-export function projectColor(name: string): string {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+/** Categorical slots, validated for colour-vision deficiency (dataviz skill,
+ *  scripts/validate_palette.js: adjacent CVD ΔE ≥ 9.1, normal-vision ≥ 19.6).
+ *  Fixed order, never cycled: the 8 projects with the most of your time over
+ *  the last 30 days take a slot (most first); every other project is grey. */
+export const PROJECT_HUES = [
+  "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948",
+];
+export const OTHER_PROJECT_COLOR = "#8a8f98";
+const assigned: Record<string, string> = {};
+
+export function setProjectColors(projects: { id: number; name: string; color?: string | null; recent_sec?: number }[]) {
+  for (const k of Object.keys(assigned)) delete assigned[k];
+  const ranked = projects.filter((p) => p.name !== "Unassigned" && !isCategory(p.name))
+    .sort((a, b) => (b.recent_sec ?? 0) - (a.recent_sec ?? 0) || a.id - b.id);
+  let slot = 0;
+  for (const p of ranked) {
+    if (p.color) assigned[p.name] = p.color;
+    else if (slot < PROJECT_HUES.length && (p.recent_sec ?? 0) > 0) assigned[p.name] = PROJECT_HUES[slot++];
+  }
 }
 
-export const CATEGORY_COLOR = "#9ca3af"; // 灰色:分类而非项目
+export function projectColor(name: string): string {
+  if (name === "Unassigned") return "#9AA1AD";
+  if (isCategory(name) || name === "其他活动") return CATEGORY_COLORS[name] ?? CATEGORY_COLOR;
+  return assigned[name] ?? OTHER_PROJECT_COLOR;
+}
+
+export const CATEGORY_COLOR = "#C6CAD2"; // 非项目分类:中性灰
+const CATEGORY_COLORS: Record<string, string> = {
+  "网页浏览": "#B9BFCA", "文献阅读": "#C9BFA8", "终端·其他": "#A7AEBB",
+  "个人事务": "#CDB8C4", "文件管理": "#C3C7CF", "文本编辑": "#BCC6B4",
+};
+
+export const CATEGORY_NAMES = [
+  "终端·其他", "网页浏览", "文献阅读", "文本编辑", "文件管理", "个人事务",
+  "系统", "PyCharm", "通信", "阅读", "其他",
+];
+
+export function isCategory(p: string): boolean {
+  return CATEGORY_NAMES.includes(p);
+}
+
+const APP_NAMES: Record<string, string> = {
+  "com.mitchellh.ghostty": "Ghostty", "google-chrome": "Chrome", "zotero": "Zotero",
+  "org.gnome.nautilus": "文件", "jetbrains-pycharm": "PyCharm", "org.gnome.texteditor": "文本编辑器",
+  "org.gnome.ptyxis": "Ptyxis", "warp-taskbar": "任务栏", "org.gnome.settings": "设置",
+  "org.gnome.loupe": "图片查看器", "code": "VS Code", "firefox": "Firefox",
+};
+
+/** Human name for an ActivityWatch app id. */
+export function appName(app: string): string {
+  const a = (app || "").toLowerCase();
+  if (APP_NAMES[a]) return APP_NAMES[a];
+  if (a.startsWith("chrome-") && a.endsWith("-default")) return "Chrome 应用";
+  if (!a) return "未知应用";
+  const last = app.split(".").pop() || app;
+  return last.charAt(0).toUpperCase() + last.slice(1);
+}
+
+/** Window title without the trailing app suffix ("… - Google Chrome"). */
+export function cleanTitle(title: string): string {
+  return (title || "")
+    .replace(/ - (Google Chrome|Zotero|Mozilla Firefox|Visual Studio Code)$/, "")
+    .replace(/^π - /, "pi · ")
+    .trim() || "(无标题)";
+}

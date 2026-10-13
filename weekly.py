@@ -19,8 +19,31 @@ from daily import run_pi  # noqa: E402
 PROMPT = (BASE / "templates" / "weekly.md").read_text(encoding="utf-8")
 
 
+# --- schedule (set from the web dashboard's 日报 page) ---------------------
+# Honoured only when systemd's timer starts us (INVOCATION_ID set, no args);
+# a manual `journal weekly` always runs.
+SCHEDULE_FILE = Path.home() / ".config" / "ai-work-journal" / "schedule.json"
+
+
+def load_schedule() -> dict:
+    import json as _json
+    try:
+        return {"daily_weekdays": [1, 2, 3, 4, 5, 6, 7], "weekly_enabled": True, "feishu_push": True,
+                **_json.loads(SCHEDULE_FILE.read_text(encoding="utf-8"))}
+    except (OSError, ValueError):
+        return {"daily_weekdays": [1, 2, 3, 4, 5, 6, 7], "weekly_enabled": True, "feishu_push": True}
+
+
+def started_by_timer() -> bool:
+    import os as _os
+    return bool(_os.environ.get("INVOCATION_ID")) and len(sys.argv) == 1
+
+
 def main():
     ref = dt.date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else dt.date.today()
+    if started_by_timer() and not load_schedule()["weekly_enabled"]:
+        print("skipped by schedule: weekly report disabled")
+        return
     iso = ref.isocalendar()
     monday = dt.date.fromisocalendar(iso[0], iso[1], 1)
     days = [monday + dt.timedelta(days=i) for i in range(7)]
@@ -48,10 +71,13 @@ def main():
         out = f"> 警告: LLM 生成失败,以下为日报拼接。\n\n" + combined.read_text(encoding="utf-8")
     out_path.write_text(out + "\n", encoding="utf-8")
     print(f"weekly report written: {out_path}")
-    fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(out_path)],
-                        capture_output=True, text=True)
-    if fe.stdout.strip():
-        print(fe.stdout.strip())
+    if load_schedule()["feishu_push"]:
+        fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(out_path)],
+                            capture_output=True, text=True)
+        if fe.stdout.strip():
+            print(fe.stdout.strip())
+    else:
+        print("feishu push disabled in schedule")
 
 
 if __name__ == "__main__":

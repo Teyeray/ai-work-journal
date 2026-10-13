@@ -1,97 +1,150 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { fmtDur, fmtHM, projectColor, CATEGORY_COLOR, AGENT_COLORS } from "./api";
-import type { AgentLane, Block, Interval, Timeline } from "./api";
+import { fmtDur, fmtHM, isCategory, projectColor } from "./api";
+import type { AgentLane, Episode, Interval, Timeline } from "./api";
+import { durS, endM, hm, hms, laneM, placeOf, startM, t2m, type Visit } from "./visits";
+
+export { t2m, hm, laneM, startM, endM };
 
 /**
- * Core activity timeline.
+ * The day on one timeline, with semantic zoom.
  *
- * - One row per agent session: hairline = lifecycle (first..last event),
- *   solid bars = execution clusters (backend segments), blank = waiting.
- * - Human lane merges same-project blocks when zoomed out; at high zoom the
- *   real window blocks render individually.
- * - Wheel zooms toward the cursor; drag pans; presets pick ranges.
+ *   minimap   whole day, activity density + draggable viewport
+ *   chapters  work episodes ("RSI · 阅读"), click to zoom in
+ *   lanes     one per project: your foreground windows on top, the project's
+ *             agents (execution, prompts, commits) underneath; browsing/reading
+ *             that belongs to no project shares one "其他活动" lane
+ *
+ * Windows too narrow to draw on their own (and closer than MERGE_PX) merge
+ * into one tinted stretch with the real foreground time drawn inside; zooming
+ * in splits them until every visit is its own titled block. Drag pans, ⌘/Ctrl+wheel (or pinch) zooms,
+ * double-click zooms in, ←/→ +/− 0 on the keyboard.
  */
 
-export const CATEGORY_NAMES = [
-  "终端·其他", "网页浏览", "文献阅读", "文本编辑", "文件管理", "个人事务",
-  "系统", "PyCharm", "通信", "阅读", "其他",
-];
-
-export function isCat(p: string) {
-  return CATEGORY_NAMES.includes(p);
-}
-
-export interface Segment {
-  project: string;
-  start: string;
-  end: string;
-  blocks: Block[];
-  switches: number;
-}
-
 export type Selection =
-  | { kind: "segment"; segment: Segment }
+  | { kind: "episode"; key: string }
   | { kind: "unknown"; interval: Interval }
   | { kind: "session"; session: AgentLane };
 
-const LABEL_W = 96;
-const AXIS_H = 26;
-const HUMAN_H = 52;
-const STATUS_H = 14;
-const EV_H = 18;
-const ROW_H = 26;
-const ROW_GAP = 7;
-const LOD_BLOCK = 1.2; // px per minute; above this, draw real blocks
-const MERGE_GAP_MIN = 8;
-
-export function t2m(iso: string): number {
-  return +iso.slice(11, 13) * 60 + +iso.slice(14, 16) + +iso.slice(17, 19) / 60;
+export const episodeKey = (e: Episode) => `${e.start}|${e.label}`;
+export function episodeTitle(e: Episode): string {
+  return e.is_category || !e.activity ? e.label : `${e.label} · ${e.activity}`;
 }
 
-function durSec(start: string, end: string): number {
-  return Math.max(0, (t2m(end) - t2m(start)) * 60);
+const LABEL_W = 168;
+const HUMAN_H = 54;
+const AGENT_H = 20;
+const OV_ROW = 9;   // spacing of the overview's thin agent lines
+const LANE_GAP = 10;
+const BUCKET_PX = 3;     // overview lane column width
+const OV_AGENT_ROWS = 4; // agent lines shown in the overview; the rest fold into one
+const MIN_SPAN = 3;     // minutes: narrowest view the minimap frame can be resized to
+const MERGE_PX = 6;     // gaps narrower than this on screen…
+const SOLO_PX = 14;     // …merge visits, unless both are wide enough to stand alone
+const OTHER = "__other";
+
+interface Lane {
+  key: string;            // project, or OTHER
+  label: string;
+  humanMin: number;
+  sessions: AgentLane[];
+  exec: [number, number, number][];   // start, end, concurrency
+  execMin: number;
 }
 
-function agentColor(agent: string): string {
-  return AGENT_COLORS[agent] ?? projectColor(agent);
-}
+interface Stretch { s: number; e: number; visits: Visit[]; active: number }
 
-function fmtRange(a: string, b: string) {
-  return `${fmtHM(a)}–${fmtHM(b)}`;
-}
-
-/** Merge consecutive blocks of the same project (gap <= MERGE_GAP_MIN). */
-export function mergeSegments(blocks: Block[]): Segment[] {
-  const segs: Segment[] = [];
-  for (const b of blocks) {
-    const last = segs[segs.length - 1];
-    if (last && last.project === b.project &&
-        (t2m(b.start) - t2m(last.end)) <= MERGE_GAP_MIN) {
-      last.end = b.end > last.end ? b.end : last.end;
-      last.blocks.push(b);
-      last.switches++;
-    } else {
-      segs.push({ project: b.project, start: b.start, end: b.end, blocks: [b], switches: 1 });
+function sweep(segs: [number, number][]): [number, number, number][] {
+  const pts: [number, number][] = [];
+  for (const [a, b] of segs) pts.push([a, 1], [Math.max(b, a + 0.3), -1]);
+  pts.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  const out: [number, number, number][] = [];
+  let c = 0, prev = 0;
+  for (const [t, d] of pts) {
+    if (c > 0 && t > prev) {
+      const last = out[out.length - 1];
+      if (last && last[1] === prev && last[2] === c) last[1] = t;
+      else out.push([prev, t, c]);
     }
+    c += d; prev = t;
   }
-  return segs;
+  return out;
+}
+
+const MINOR_MIN = 3;   // projects you touched < 3 min with no agent fold into 其他活动
+
+/** Which lane a visit belongs to: its project, or the shared 其他活动 lane. */
+export function laneKeyFor(project: string, minor: Set<string>): string {
+  return !project || isCategory(project) || minor.has(project) ? OTHER : project;
+}
+
+function minorProjects(tl: Timeline, visits: Visit[]): Set<string> {
+  const t = new Map<string, number>();
+  for (const v of visits) t.set(v.project, (t.get(v.project) ?? 0) + (v.e - v.s));
+  const withAgent = new Set(tl.agent.map((a) => a.project || "Unassigned"));
+  return new Set([...t.entries()].filter(([p, m]) => m < MINOR_MIN && !withAgent.has(p)).map(([p]) => p));
+}
+
+function buildLanes(tl: Timeline, visits: Visit[], minor: Set<string>): Lane[] {
+  const day = tl.day_key;
+  const human = new Map<string, number>();
+  for (const v of visits) {
+    const k = laneKeyFor(v.project, minor);
+    human.set(k, (human.get(k) ?? 0) + (v.e - v.s));
+  }
+  const agents = new Map<string, AgentLane[]>();
+  for (const a of tl.agent) {
+    const k = a.project || "Unassigned";
+    agents.set(k, [...(agents.get(k) ?? []), a]);
+  }
+  const keys = new Set([...human.keys(), ...agents.keys()]);
+  const lanes: Lane[] = [...keys].map((k) => {
+    const sessions = agents.get(k) ?? [];
+    const exec = sweep(sessions.flatMap((s) => s.segments.map((g) =>
+      [laneM(g.start, day, "start"), laneM(g.end, day, "end")] as [number, number])));
+    return {
+      key: k, label: k === OTHER ? "其他活动" : k === "Unassigned" ? "未归属" : k,
+      humanMin: human.get(k) ?? 0, sessions, exec,
+      execMin: exec.reduce((s, [a, b]) => s + (b - a), 0),
+    };
+  });
+  const rank = (l: Lane) => (l.key === OTHER ? -2 : l.key === "Unassigned" ? -1 : 0);
+  return lanes.sort((x, y) => rank(y) - rank(x) || (y.humanMin * 3 + y.execMin) - (x.humanMin * 3 + x.execMin));
 }
 
 interface Props {
   tl: Timeline;
+  visits: Visit[];
+  view: [number, number];
+  onView: (v: [number, number]) => void;
+  extent: [number, number];     // everything that happened (incl. overnight agents)
+  workday: [number, number];    // your observed window span
   selection: Selection | null;
-  onSelect: (s: Selection) => void;
+  onSelect: (s: Selection | null) => void;
   isToday: boolean;
+  hoverVisit: number | null;
+  onHoverVisit: (i: number | null) => void;
+  onPickVisit: (i: number) => void;
 }
 
-export function ActivityTimeline({ tl, selection, onSelect, isToday }: Props) {
+export function ActivityTimeline({ tl, visits, view, onView, extent, workday, selection, onSelect, isToday,
+  hoverVisit, onHoverVisit, onPickVisit }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<SVGSVGElement>(null);
-  const [width, setWidth] = useState(1100);
-  const [view, setView] = useState<[number, number]>([0, 1440]);
-  const [fitOnce, setFitOnce] = useState(false);
-  const [hover, setHover] = useState<{ x: number; y: number; title: string; lines: string[] } | null>(null);
-  const drag = useRef<{ x: number; v: [number, number] } | null>(null);
+  const [width, setWidth] = useState(1000);
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showLinks, setShowLinks] = useState(true);
+  // project lanes are the detail view under the overview lane; remember the choice per browser
+  const [detail, setDetail] = useState<boolean>(() => {
+    try { return localStorage.getItem("tl.detail") === "1"; } catch { return false; }
+  });
+  const toggleDetail = () => setDetail((d) => {
+    try { localStorage.setItem("tl.detail", d ? "0" : "1"); } catch { /* private mode */ }
+    return !d;
+  });
+  const drag = useRef<{ x0: number; v: [number, number]; moved: boolean } | null>(null);
+  // minimap viewport: drag the body to pan, drag either edge to resize (= zoom)
+  const miniDrag = useRef<{ x0: number; v: [number, number]; mode: "move" | "l" | "r"; scale: number } | null>(null);
+  const [resizing, setResizing] = useState(false);
 
   useLayoutEffect(() => {
     const el = wrapRef.current;
@@ -102,351 +155,558 @@ export function ActivityTimeline({ tl, selection, onSelect, isToday }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  const activityBounds = useMemo<[number, number] | null>(() => {
-    let lo = Infinity, hi = -Infinity;
-    for (const b of tl.blocks) { lo = Math.min(lo, t2m(b.start)); hi = Math.max(hi, t2m(b.end)); }
-    for (const a of tl.agent) {
-      for (const s of a.segments) { lo = Math.min(lo, t2m(s.start)); hi = Math.max(hi, t2m(s.end)); }
+  const day = tl.day_key;
+  const [a, b] = view;
+  const W = Math.max(200, width - LABEL_W);
+  const ppm = W / (b - a);
+  const x = (m: number) => (Math.max(a, Math.min(b, m)) - a) * ppm;
+  const w = (s: number, e: number) => Math.max(0, x(e) - x(s));
+  const inView = (s: number, e: number) => e > a && s < b;
+
+  const minor = useMemo(() => minorProjects(tl, visits), [tl, visits]);
+  const lanes = useMemo(() => buildLanes(tl, visits, minor), [tl, visits, minor]);
+  const laneIndex = useMemo(() => new Map(lanes.map((l, i) => [l.key, i])), [lanes]);
+  const laneKeyOf = (v: Visit) => laneKeyFor(v.project, minor);
+
+  // per-lane stretches at the current zoom
+  const stretches = useMemo(() => {
+    const by = new Map<string, Stretch[]>();
+    for (const v of visits) {
+      if (!inView(v.s, v.e)) continue;
+      const k = laneKeyOf(v);
+      const arr = by.get(k) ?? [];
+      const last = arr[arr.length - 1];
+      const lastV = last?.visits[last.visits.length - 1];
+      // only slivers merge with slivers: a visit wide enough to draw always stands alone
+      const narrow = !!lastV && (lastV.e - lastV.s) * ppm < SOLO_PX && (v.e - v.s) * ppm < SOLO_PX;
+      if (last && (v.s - last.e) * ppm < MERGE_PX && narrow) {
+        last.e = Math.max(last.e, v.e); last.visits.push(v); last.active += v.e - v.s;
+      } else arr.push({ s: v.s, e: v.e, visits: [v], active: v.e - v.s });
+      by.set(k, arr);
     }
-    for (const e of tl.evidence) { lo = Math.min(lo, t2m(e.at)); hi = Math.max(hi, t2m(e.at)); }
-    if (tl.observed_span) { lo = Math.min(lo, t2m(tl.observed_span.start)); hi = Math.max(hi, t2m(tl.observed_span.end)); }
-    return lo === Infinity ? null : [lo, hi];
-  }, [tl]);
+    return by;
+  }, [visits, a, b, ppm]); // eslint-disable-line
 
-  // initial view: the human observation window (the main workday);
-  // "聚焦活动" (toolbar) fits ALL activity incl. overnight auto runs.
-  useEffect(() => {
-    if (width && !fitOnce && (activityBounds || tl.agent.length)) {
-      setFitOnce(true);
-      let lo = 480, hi = 1200;
-      if (tl.observed_span) {
-        lo = t2m(tl.observed_span.start);
-        hi = t2m(tl.observed_span.end);
-      } else if (activityBounds) {
-        [lo, hi] = activityBounds;
-      }
-      const pad = 30;
-      setView([Math.max(0, lo - pad), Math.min(1440, hi + pad)]);
-    }
-  }, [width, activityBounds, tl.agent.length, tl.observed_span, fitOnce]);
-
-  const [v0, v1] = view;
-  const span = v1 - v0;
-  const timeW = Math.max(200, width - LABEL_W);
-  const pxPerMin = timeW / span;
-  const X = (m: number) => LABEL_W + (m - v0) * pxPerMin;
-
-  const segments = useMemo(() => mergeSegments(tl.blocks), [tl.blocks]);
-  const drawBlocks = pxPerMin >= LOD_BLOCK;
-  const humanItems: (Segment | Block)[] = drawBlocks ? tl.blocks : segments;
-
-  // agent rows: pack by lifecycle overlap
-  const agentRows = useMemo(() => {
-    const rows: AgentLane[][] = [];
-    for (const s of [...tl.agent].sort((a, b) => a.start.localeCompare(b.start))) {
-      let placed = false;
-      for (const row of rows) {
-        if (row[row.length - 1].end <= s.start) { row.push(s); placed = true; break; }
-      }
-      if (!placed) rows.push([s]);
-    }
-    return rows;
-  }, [tl.agent]);
-
-  const agentTop = AXIS_H + HUMAN_H + STATUS_H + EV_H + 6;
-  const bodyH = agentTop + agentRows.length * (ROW_H + ROW_GAP) + 4;
-  const axisW = LABEL_W + timeW;
-
-  const clampView = (nv: [number, number]): [number, number] => {
-    let [a, b] = nv;
-    const sp = Math.min(Math.max(b - a, 30), 1440);
-    a = Math.min(Math.max(a, 0), 1440 - sp);
-    return [a, a + sp];
-  };
-
-  const zoom = (factor: number, focusMin: number | null) => {
-    setView(([a, b]) => {
-      const sp = (b - a) / factor;
-      const f = focusMin ?? (a + b) / 2;
-      return clampView([f - sp / 2, f + sp / 2]);
+  // vertical layout
+  const laneLayout = useMemo(() => {
+    let y = 0;
+    return lanes.map((l) => {
+      const hasHuman = l.humanMin > 0, hasAgent = l.sessions.length > 0;
+      const top = y;
+      const hy = top, ay = top + (hasHuman ? HUMAN_H + 3 : 10);
+      const sessRows = expanded.has(l.key) ? l.sessions.length : 0;
+      const h = Math.max(58, (hasHuman ? HUMAN_H + 3 : 0) + (hasAgent ? AGENT_H : 0)) + sessRows * 20;
+      y += h + LANE_GAP;
+      return { top, hy, ay, h, hasHuman, hasAgent };
     });
-  };
+  }, [lanes, expanded]);
+  const lanesH = laneLayout.length ? laneLayout[laneLayout.length - 1].top + laneLayout[laneLayout.length - 1].h : 0;
 
-  // wheel zoom (non-passive so we can preventDefault)
+  // ---- overview lane: the whole day on one track ----
+  // Your time: slice the view into BUCKET_PX-wide columns, give each column to the
+  // project holding most of its foreground time, then join equal neighbours — wide
+  // calm blocks when zoomed out, single windows when zoomed in. Agents: one thin
+  // stacked line per project with an agent executing, inside the same lane.
+  const overview = useMemo(() => {
+    const n = Math.max(1, Math.floor(W / BUCKET_PX)), bw = (b - a) / n;
+    const cols: Map<string, number>[] = Array.from({ length: n }, () => new Map());
+    for (const v of visits) {
+      if (v.e <= a || v.s >= b) continue;
+      const k = laneKeyOf(v);
+      const i0 = Math.max(0, Math.floor((v.s - a) / bw)), i1 = Math.min(n - 1, Math.floor((v.e - a) / bw));
+      for (let i = i0; i <= i1; i++) {
+        const ov = Math.min(v.e, a + (i + 1) * bw) - Math.max(v.s, a + i * bw);
+        if (ov > 0) cols[i].set(k, (cols[i].get(k) ?? 0) + ov);
+      }
+    }
+    const runs: { key: string; s: number; e: number; active: number; lead: Visit | null; n: number }[] = [];
+    cols.forEach((col, i) => {
+      let best = "", bv = 0, tot = 0;
+      for (const [k, v] of col) { tot += v; if (v > bv) { bv = v; best = k; } }
+      if (tot < bw * 0.2) return;                       // mostly away / no window
+      const last = runs[runs.length - 1];
+      if (last && last.key === best && Math.abs(last.e - (a + i * bw)) < bw / 2) { last.e = a + (i + 1) * bw; last.active += tot; }
+      else runs.push({ key: best, s: a + i * bw, e: a + (i + 1) * bw, active: tot, lead: null, n: 0 });
+    });
+    for (const r of runs) {
+      let lead: Visit | null = null, ld = 0, cnt = 0;
+      for (const v of visits) {
+        if (v.e <= r.s || v.s >= r.e || laneKeyOf(v) !== r.key) continue;
+        cnt++;
+        const d = Math.min(v.e, r.e) - Math.max(v.s, r.s);
+        if (d > ld) { ld = d; lead = v; }
+      }
+      r.lead = lead; r.n = cnt;
+      if (lead && cnt === 1) { r.s = Math.max(r.s, lead.s); r.e = Math.min(r.e, lead.e); }   // a lone window: its true edges
+    }
+    const agentRows = lanes.filter((l) => l.exec.some(([s0, e0]) => e0 > a && s0 < b)).map((l) => l.key);
+    const shown = agentRows.slice(0, OV_AGENT_ROWS);
+    const extra = agentRows.slice(OV_AGENT_ROWS);
+    return { runs, agentRows: shown, extra };
+  }, [visits, lanes, a, b, W]); // eslint-disable-line
+  const ovH = HUMAN_H + 7 + Math.max(1, overview.agentRows.length + (overview.extra.length ? 1 : 0)) * OV_ROW + 6;
+
+  // ---- view helpers ----
+  const clamp = ([s, e]: [number, number]): [number, number] => {
+    const sp = Math.min(Math.max(e - s, 3), 1440);
+    const s2 = Math.min(Math.max(s, 0), 1440 - sp);
+    return [s2, s2 + sp];
+  };
+  const toMin = (clientX: number) => {
+    const r = wrapRef.current!.getBoundingClientRect();
+    return a + (clientX - r.left - LABEL_W) / ppm;
+  };
+  const zoomAt = (f: number, k: number) => onView(clamp([f - (f - a) * k, f + (b - f) * k]));
+  const setSpan = (m: number) => { const c = cursor ?? (a + b) / 2; onView(clamp([c - m / 2, c + m / 2])); };
+
   useEffect(() => {
-    const el = bodyRef.current;
+    const el = wrapRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const focus = v0 + (e.clientX - rect.left - LABEL_W) / pxPerMin;
-      zoom(e.deltaY < 0 ? 1.25 : 0.8, focus);
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        zoomAt(toMin(e.clientX), e.deltaY < 0 ? 0.8 : 1.25);
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        e.preventDefault();
+        const d = ((e.shiftKey ? e.deltaY : e.deltaX) / W) * (b - a);
+        onView(clamp([a + d, b + d]));
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [v0, pxPerMin]);
+  }, [a, b, W]); // eslint-disable-line
 
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-    drag.current = { x: e.clientX, v: view };
+  const onKey = (e: React.KeyboardEvent) => {
+    const sp = b - a;
+    if (e.key === "ArrowLeft") onView(clamp([a - sp * 0.2, b - sp * 0.2]));
+    else if (e.key === "ArrowRight") onView(clamp([a + sp * 0.2, b + sp * 0.2]));
+    else if (e.key === "+" || e.key === "=") zoomAt(cursor ?? (a + b) / 2, 0.66);
+    else if (e.key === "-") zoomAt(cursor ?? (a + b) / 2, 1.5);
+    else if (e.key === "0") onView(workday);
+    else return;
+    e.preventDefault();
   };
-  const onPointerMove = (e: React.PointerEvent) => {
-    if (drag.current) {
-      const dx = e.clientX - drag.current.x;
-      const dmin = dx / pxPerMin;
-      setView(clampView([drag.current.v[0] - dmin, drag.current.v[1] - dmin]));
+
+  // ---- readout: where you were at the cursor second ----
+  const readout = useMemo(() => {
+    if (cursor == null) return null;
+    let cur: Visit | undefined, idx = visits.length;
+    for (let i = 0; i < visits.length; i++) {
+      if (visits[i].s <= cursor && visits[i].e > cursor) { cur = visits[i]; idx = i; break; }
+      if (visits[i].s > cursor) { idx = i; break; }
     }
-  };
-  const onPointerUp = () => { drag.current = null; };
-
-  const setHoverAt = (e: React.MouseEvent, title: string, lines: string[]) => {
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setHover({ x: e.clientX - rect.left, y: e.clientY - rect.top, title, lines });
-  };
-
-  const nowMin = isToday ? new Date().getHours() * 60 + new Date().getMinutes() : -1;
-  const showNow = nowMin >= v0 && nowMin <= v1;
-
-  // hour label step: keep >= 54px between labels
-  const stepH = Math.max(1, Math.ceil(54 / (pxPerMin * 60)));
-  const hours = useMemo(() => {
-    const out: number[] = [];
-    for (let h = Math.floor(v0 / 60); h <= Math.ceil(v1 / 60); h++) {
-      if (h % stepH === 0) out.push(h);
+    let prev: Visit | undefined;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (!cur || laneKeyOf(visits[i]) !== laneKeyOf(cur) || visits[i].title !== cur.title) { prev = visits[i]; break; }
     }
-    return out;
-  }, [v0, v1, stepH]);
+    const running = tl.agent.filter((s) => s.segments.some((g) =>
+      laneM(g.start, day, "start") <= cursor && laneM(g.end, day, "end") >= cursor));
+    const away = tl.away.some((iv) => startM(iv.start, day) <= cursor && endM(iv.end, day) > cursor);
+    return { cur, prev, running, away };
+  }, [cursor, visits, tl, day]); // eslint-disable-line
 
-  const kindColor = (k: string) =>
-    k === "commit" ? "#3f3f46" : k === "agent_user" ? "#5e6ad2" : "#c7c7cf";
+  // ---- ticks ----
+  const span = b - a;
+  const step = span <= 12 ? 1 : span <= 30 ? 5 : span <= 75 ? 10 : span <= 150 ? 15 : span <= 360 ? 30 : span <= 720 ? 60 : 120;
+  const ticks: number[] = [];
+  for (let t = Math.ceil(a / step) * step; t <= b + 1e-6; t += step) ticks.push(t);
+  const nowM = isToday ? new Date().getHours() * 60 + new Date().getMinutes() : -1;
 
-  const selKey = (s: Selection) =>
-    s.kind === "session" ? `s${s.session.id}` :
-    s.kind === "segment" ? `b${s.segment.start}` : `u${s.interval.start}`;
-  const isSel = (s: Selection | null, key: string) => s && selKey(s) === key;
+  // ---- minimap ----
+  const [m0, m1] = [Math.min(extent[0], a), Math.max(extent[1], b)];
+  const mx = (m: number) => ((m - m0) / (m1 - m0)) * W;
+  const execUnion = useMemo(() => sweep(lanes.flatMap((l) => l.exec.map(([s, e]) => [s, e] as [number, number])))
+    .reduce<[number, number][]>((acc, [s, e]) => {
+      const last = acc[acc.length - 1];
+      if (last && s <= last[1]) last[1] = Math.max(last[1], e); else acc.push([s, e]);
+      return acc;
+    }, []), [lanes]);
+
+  const selEp = selection?.kind === "episode" ? selection.key : "";
+  const selSession = selection?.kind === "session" ? selection.session.id : -1;
+  const presets: [number, string][] = [[10, "10 分"], [30, "30 分"], [120, "2 时"]];
+  const drawLinks = showLinks && ppm >= 4;
+  const ordered = useMemo(() => visits.filter((v) => inView(v.s, v.e)), [visits, a, b]); // eslint-disable-line
 
   return (
-    <div ref={wrapRef} className="relative select-none">
+    <div className="tl2" tabIndex={0} onKeyDown={onKey}>
       {/* toolbar */}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <div className="flex rounded-md border border-neutral-200 p-0.5">
-          {([["fit", "聚焦活动"], ["work", "工作时段"], ["day", "全天"]] as const).map(([k, label]) => (
-            <button key={k}
-              className="rounded px-2 py-0.5 text-[11.5px] font-medium text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
-              onClick={() => {
-                if (k === "fit") setView(clampView([
-                  Math.max(0, (activityBounds?.[0] ?? 480) - 30),
-                  Math.min(1440, (activityBounds?.[1] ?? 1200) + 30),
-                ]));
-                else if (k === "work") setView([8 * 60, 20 * 60]);
-                else setView([0, 1440]);
-              }}>{label}</button>
+      <div className="tl2-bar">
+        <div className="seg">
+          <button className={Math.abs(a - extent[0]) < 1 && Math.abs(b - extent[1]) < 1 ? "on" : ""} onClick={() => onView(extent)}>全天</button>
+          {(workday[0] !== extent[0] || workday[1] !== extent[1]) && (
+            <button className={Math.abs(a - workday[0]) < 1 && Math.abs(b - workday[1]) < 1 ? "on" : ""} onClick={() => onView(workday)}>工作时段</button>
+          )}
+          {presets.map(([m, l]) => (
+            <button key={m} className={Math.abs(span - m) < 0.5 ? "on" : ""} onClick={() => setSpan(m)}>{l}</button>
           ))}
         </div>
         <div className="flex items-center gap-1">
-          <button className="icon-btn" title="缩小" onClick={() => zoom(1.6, null)}>−</button>
-          <span className="w-16 text-center text-[11px] tabular-nums text-neutral-400">
-            {pxPerMin >= 1 ? `${Math.round(60 / pxPerMin)} 秒/px` : `${(1 / pxPerMin).toFixed(1)} 分/px`}
+          <button className="icon-btn" title="往前 (←)" onClick={() => onView(clamp([a - span * 0.3, b - span * 0.3]))}>‹</button>
+          <span className="w-[100px] text-center text-[12.5px] font-medium tabular-nums text-neutral-700">{hm(a)}–{hm(b)}</span>
+          <button className="icon-btn" title="往后 (→)" onClick={() => onView(clamp([a + span * 0.3, b + span * 0.3]))}>›</button>
+          <button className="icon-btn ml-1" title="缩小 (−)" onClick={() => zoomAt((a + b) / 2, 1.5)}>−</button>
+          <button className="icon-btn" title="放大 (+)" onClick={() => zoomAt((a + b) / 2, 0.66)}>+</button>
+        </div>
+        <label className="tl-check ml-auto text-[12.5px] text-neutral-500">
+          <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />切换连线
+        </label>
+        <span className="hidden text-[11.5px] text-neutral-400 2xl:inline">拖拽平移 · ⌘/Ctrl+滚轮缩放 · 双击放大 · ←/→/+/−/0</span>
+      </div>
+
+      {/* readout */}
+      <div className="tl2-readout">
+        {readout ? (<>
+          <span className="font-semibold tabular-nums text-neutral-900">{hms(cursor!)}</span>
+          {readout.cur ? (<>
+            <span className="tl2-chip" style={{ background: isCategory(readout.cur.project) ? "#71717a" : projectColor(readout.cur.project) }}>
+              {readout.cur.project}
+            </span>
+            <span className="shrink-0 text-neutral-500">{readout.cur.appLabel}</span>
+            <span className="min-w-0 truncate text-neutral-800">{placeOf(readout.cur)}</span>
+            <span className="shrink-0 text-neutral-400">已停留 {durS(cursor! - readout.cur.s)} / {durS(readout.cur.e - readout.cur.s)}</span>
+            {readout.cur.reason && <span className="shrink-0 rounded bg-white px-1.5 text-[11.5px] text-neutral-400 ring-1 ring-neutral-200" title="为什么归到这里">{readout.cur.reason}</span>}
+          </>) : <span className="text-neutral-400">{readout.away ? "离开电脑" : "无前台窗口"}</span>}
+          <span className="ml-auto flex shrink-0 items-center gap-3">
+            {readout.prev && (
+              <span className="max-w-[300px] truncate text-neutral-400">
+                ← {hms(readout.prev.e)} 从 {readout.prev.appLabel} · {placeOf(readout.prev).slice(0, 26)}
+              </span>
+            )}
+            {readout.running.length > 0 && (
+              <span className="rounded-md bg-neutral-100 px-1.5 text-neutral-600">
+                {readout.running.length} agent 执行中 · {[...new Set(readout.running.map((s) => s.project))].join(" / ")}
+              </span>
+            )}
           </span>
-          <button className="icon-btn" title="放大" onClick={() => zoom(0.62, null)}>+</button>
-        </div>
-        <div className="ml-auto flex items-center gap-3 text-[11px] text-neutral-400">
-          <span className="flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: "#5E6AD2" }} />项目</span>
-          <span className="flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: CATEGORY_COLOR }} />分类</span>
-          <span className="flex items-center gap-1"><i className="h-2 w-5 rounded-sm bg-neutral-200" />离开</span>
-          <span className="flex items-center gap-1"><i className="h-2 w-5 rounded-sm" style={{ background: "repeating-linear-gradient(45deg,#fbbf24 0 3px,#fff7ed 3px 6px)" }} />未知</span>
-          <span className="flex items-center gap-1"><i className="h-1.5 w-5 rounded-full bg-neutral-300" />会话生命周期</span>
-          <span className="flex items-center gap-1"><i className="h-2.5 w-6 rounded-sm bg-[#5E6AD2]" /><i className="h-2.5 w-6 rounded-sm bg-[#E8862E]" />执行</span>
-          <span className="hidden items-center gap-1 sm:flex"><i className="text-[10px] text-neutral-500">⎇</i>提交 <i className="text-[10px] ev-user">❯</i>输入</span>
-        </div>
+        </>) : (
+          <span className="text-neutral-400">把鼠标放到时间轴上,读出那一秒你在哪个窗口、停留多久、从哪跳来、哪些 agent 在跑。</span>
+        )}
       </div>
 
       {!tl.has_observation && (
         <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-700">
-          该日无前台窗口观察(ActivityWatch);仅显示 Agent 会话与事件证据。
+          该日没有前台窗口观察(ActivityWatch),只显示 Agent 执行与证据。
         </div>
       )}
 
-      {/* axis (fixed) */}
-      <svg width={axisW} height={AXIS_H} className="block">
-        {hours.map((h) => {
-          const m = h * 60;
-          return (
-            <g key={h}>
-              <line x1={X(m)} x2={X(m)} y1={AXIS_H - 8} y2={AXIS_H - 2} stroke="#d4d4d8" strokeWidth={1} />
-              <text x={X(m) + 3} y={12} fontSize={10.5} fill="#a1a1aa" className="tabular-nums">
-                {String(((h % 24) + 24) % 24).padStart(2, "0")}:00
-              </text>
-            </g>
-          );
-        })}
-        {showNow && <line x1={X(nowMin)} x2={X(nowMin)} y1={0} y2={AXIS_H} stroke="#f43f5e" strokeWidth={1.5} />}
-      </svg>
+      <div ref={wrapRef} className="tl2-body"
+        onPointerMove={(e) => {
+          const r = wrapRef.current!.getBoundingClientRect();
+          const inTrack = e.clientX - r.left >= LABEL_W;
+          setCursor(inTrack ? toMin(e.clientX) : null);
+          if (miniDrag.current) {
+            const { x0, v, mode, scale } = miniDrag.current;   // scale frozen at drag start
+            const d = (e.clientX - x0) * scale;
+            if (mode === "move") onView(clamp([v[0] + d, v[1] + d]));
+            else if (mode === "l") onView([Math.max(0, Math.min(v[0] + d, v[1] - MIN_SPAN)), v[1]]);
+            else onView([v[0], Math.min(1440, Math.max(v[1] + d, v[0] + MIN_SPAN))]);
+            return;
+          }
+          if (!drag.current) return;
+          const dx = e.clientX - drag.current.x0;
+          if (!drag.current.moved && Math.abs(dx) < 4) return;
+          drag.current.moved = true;
+          (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+          const d = -dx / ppm;
+          onView(clamp([drag.current.v[0] + d, drag.current.v[1] + d]));
+        }}
+        onPointerUp={() => { miniDrag.current = null; setResizing(false); setTimeout(() => { drag.current = null; }); }}
+        onPointerCancel={() => { drag.current = null; miniDrag.current = null; setResizing(false); }}
+        onPointerLeave={() => setCursor(null)}>
 
-      {/* body (scrollable if agent rows exceed viewport) */}
-      <div className="thin-scroll relative max-h-[430px] overflow-y-auto rounded-lg border border-neutral-100 bg-gradient-to-b from-neutral-50/60 to-white">
-        <svg
-          ref={bodyRef}
-          width={axisW}
-          height={Math.max(bodyH, 150)}
-          className="block cursor-grab active:cursor-grabbing"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={() => { onPointerUp(); setHover(null); }}
-        >
-          {/* grid lines */}
-          {hours.map((h) => (
-            <line key={h} x1={X(h * 60)} x2={X(h * 60)} y1={0} y2={bodyH}
-              stroke="#ececee" strokeWidth={h % 6 === 0 ? 1 : 0.6} />
-          ))}
-          {showNow && <line x1={X(nowMin)} x2={X(nowMin)} y1={0} y2={bodyH} stroke="#f43f5e" strokeOpacity={0.5} strokeWidth={1} />}
+        {/* minimap */}
+        <div className="tl-row tl2-mini-row">
+          <div className="tl-lab"><small>全天</small></div>
+          <div className="tl-track tl2-mini"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              const scale = (m1 - m0) / W;
+              const edge = (e.target as HTMLElement).dataset.edge as "l" | "r" | undefined;
+              (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+              if (edge) {
+                miniDrag.current = { x0: e.clientX, v: [a, b], mode: edge, scale };
+                setResizing(true);
+                return;
+              }
+              const r = e.currentTarget.getBoundingClientRect();
+              const m = m0 + (e.clientX - r.left) * scale;
+              const v: [number, number] = m < a || m > b ? clamp([m - span / 2, m + span / 2]) : [a, b];
+              if (v[0] !== a) onView(v);
+              miniDrag.current = { x0: e.clientX, v, mode: "move", scale };
+            }}>
+            {visits.map((v) => (
+              <div key={v.i} className="tl2-mini-v" style={{ left: mx(v.s), width: Math.max(0.6, mx(v.e) - mx(v.s)),
+                background: isCategory(v.project) ? "#c4c7ce" : projectColor(v.project) }} />
+            ))}
+            {execUnion.map(([s, e], i) => (
+              <div key={i} className="tl2-mini-a" style={{ left: mx(s), width: Math.max(0.6, mx(e) - mx(s)) }} />
+            ))}
+            <div className={`tl2-mini-view ${resizing ? "resizing" : ""}`} style={{ left: mx(a), width: Math.max(10, mx(b) - mx(a)) }}>
+              <span className="tl2-mini-h l" data-edge="l" title="拖动调整开始时间" />
+              <span className="tl2-mini-h r" data-edge="r" title="拖动调整结束时间" />
+            </div>
+          </div>
+        </div>
 
-          {/* ---------- human lane ---------- */}
-          <text x={0} y={AXIS_H + 14} fontSize={10} fill="#a1a1aa">人类前台</text>
-          {humanItems.map((it, i) => {
-            const project = "project" in it ? it.project : "";
-            const isSeg = "blocks" in it;
-            const key = isSeg ? `b${it.start}` : `b${it.start}`;
-            const m0 = t2m(it.start), m1 = Math.max(t2m(it.end), m0 + 1 / pxPerMin);
-            const x0 = X(m0), w = Math.max(X(m1) - X(m0), 1);
-            const fill = isCat(project) ? CATEGORY_COLOR : projectColor(project);
-            const manual = (isSeg ? it.blocks : [it]).some((b) => b.is_manual_override);
-            const dur = durSec(it.start, it.end);
-            const lines = [
-              `${fmtRange(it.start, it.end)} · ${fmtDur(dur)}`,
-              `活动 ${"activity_type" in it ? it.activity_type : it.blocks[0].activity_type}`,
-              ...(isSeg ? [`${it.blocks.length} 个窗口事件,${it.switches} 次切换`] : []),
-              (isSeg ? it.blocks[0] : (it as Block)).titles[0]
-                ? `“${(isSeg ? it.blocks[0] : (it as Block)).titles[0].slice(0, 60)}”` : "",
-              `${(isSeg ? it.blocks : [it]).reduce((s, b) => s + b.evidence_count, 0)} 条证据 · 置信 ${Math.round((isSeg ? it.blocks : [it]).reduce((s, b) => s + b.confidence, 0) / (isSeg ? it.blocks.length : 1) * 100)}%${manual ? " · 人工修正" : ""}`,
-            ].filter(Boolean);
-            return (
-              <g key={`${key}${i}`}
-                className="cursor-pointer"
-                onClick={() => onSelect(isSeg
-                  ? { kind: "segment", segment: it as Segment }
-                  : { kind: "segment", segment: { project: it.project, start: it.start, end: it.end, blocks: [it as Block], switches: 1 } })}
-                onMouseMove={(e) => setHoverAt(e, project || "人类活动", lines)}
-                onMouseLeave={() => setHover(null)}
-              >
-                <rect x={x0} y={AXIS_H + 18} width={w} height={drawBlocks ? 32 : 34}
-                  rx={drawBlocks ? 2 : 5} fill={fill} fillOpacity={manual ? 1 : 0.88}
-                  stroke={isSel(selection, key) ? "#18181b" : "none"} strokeWidth={1.6}
-                />
-                {!drawBlocks && w >= 44 && (
-                  <text x={x0 + 6} y={AXIS_H + 18 + 22} fontSize={10.5} fill="#ffffff" fillOpacity={0.95}
-                    className="pointer-events-none font-medium">
-                    {project} {fmtDur(dur)}
-                  </text>
-                )}
-              </g>
-            );
-          })}
+        {/* axis */}
+        <div className="tl-row tl2-axis">
+          <div className="tl-lab" />
+          <div className="tl-track">
+            {ticks.map((t) => <div key={t} className="tl-tick" style={{ left: x(t) }}>{hm(t)}</div>)}
+          </div>
+        </div>
 
-          {/* away + unknown strip */}
-          <text x={0} y={AXIS_H + HUMAN_H + 10} fontSize={9.5} fill="#c0c0c8">离开/未知</text>
-          {tl.away.map((iv, i) => (
-            <rect key={`a${i}`} x={X(t2m(iv.start))} width={Math.max(X(t2m(iv.end)) - X(t2m(iv.start)), 0.5)}
-              y={AXIS_H + HUMAN_H + 14} height={8} rx={2} fill="#e4e4e7"
-              onMouseMove={(e) => setHoverAt(e, "离开", [`${fmtRange(iv.start, iv.end)} · ${fmtDur(durSec(iv.start, iv.end))}`, "AFK:键盘/鼠标无输入"])} />
-          ))}
-          {tl.unknown.map((iv, i) => (
-            <rect key={`u${i}`} x={X(t2m(iv.start))} width={Math.max(X(t2m(iv.end)) - X(t2m(iv.start)), 1.5)}
-              y={AXIS_H + HUMAN_H + 14} height={8} rx={2} fill="url(#unk)" stroke="#fcd34d" strokeWidth={0.5}
-              className="cursor-pointer"
-              onClick={() => onSelect({ kind: "unknown", interval: iv })}
-              onMouseMove={(e) => setHoverAt(e, "未知区间", [`${fmtRange(iv.start, iv.end)} · ${fmtDur(durSec(iv.start, iv.end))}`, "观察期内无窗口数据 · 点击标注"])} />
-          ))}
+        <div className="relative"
+          onPointerDown={(e) => {
+            if (e.button !== 0 || e.clientX - wrapRef.current!.getBoundingClientRect().left < LABEL_W) return;
+            drag.current = { x0: e.clientX, v: [a, b], moved: false };
+          }}
+          onDoubleClick={(e) => { if (e.clientX - wrapRef.current!.getBoundingClientRect().left >= LABEL_W) zoomAt(toMin(e.clientX), 0.5); }}>
+          <div className="tl-grid" style={{ left: LABEL_W, top: 0 }}>
+            {ticks.map((t) => <div key={t} className="tl-gl" style={{ left: x(t) }} />)}
+          </div>
 
-          {/* evidence lane */}
-          <text x={0} y={AXIS_H + HUMAN_H + STATUS_H + 12} fontSize={9.5} fill="#c0c0c8">事件</text>
-          {tl.evidence.map((e) => {
-            const x = X(t2m(e.at));
-            if (x < LABEL_W - 4 || x > LABEL_W + timeW + 4) return null;
-            return (
-              <g key={e.id}
-                onMouseMove={(ev) => setHoverAt(ev, e.kind === "commit" ? "Git 提交" : e.kind === "agent_user" ? "用户输入" : "会话启动", [
-                  fmtHM(e.at),
-                  e.label ? e.label.slice(0, 70) : "",
-                ].filter(Boolean))}
-                onMouseLeave={() => setHover(null)}>
-                <circle cx={x} cy={AXIS_H + HUMAN_H + STATUS_H + 16} r={3.4} fill={kindColor(e.kind)} />
-                {e.kind === "commit" && <circle cx={x} cy={AXIS_H + HUMAN_H + STATUS_H + 16} r={5.5} fill="none" stroke={kindColor(e.kind)} strokeOpacity={0.3} />}
-                <circle cx={x} cy={AXIS_H + HUMAN_H + STATUS_H + 16} r={8} fill="transparent" />
-              </g>
-            );
-          })}
-
-          {/* ---------- agent lanes ---------- */}
-          {agentRows.map((row, ri) => row.map((s) => {
-            const y = agentTop + ri * (ROW_H + ROW_GAP);
-            const lx0 = X(t2m(s.start));
-            const lx1 = Math.max(X(t2m(s.end)), lx0 + 2);
-            const col = agentColor(s.agent);
-            const key = `s${s.id}`;
-            const lines = [
-              `${s.agent} · ${s.project}${s.status === "running" ? " · 运行中" : ""}`,
-              `生命周期 ${fmtRange(s.start, s.end)}`,
-              `执行 ${fmtDur(s.exec_sec)} · ${s.segments.length} 段 · 等待中 ${fmtDur(Math.max(0, durSec(s.start, s.end) - s.exec_sec))}`,
-              `${s.n_events} 事件 · ${s.n_user} 次用户输入`,
-              s.cwd ? s.cwd.split("/").slice(-1)[0] : "",
-            ].filter(Boolean);
-            return (
-              <g key={key} className="cursor-pointer"
-                onClick={() => onSelect({ kind: "session", session: s })}
-                onMouseMove={(e) => setHoverAt(e, `${s.agent} 会话`, lines)}
-                onMouseLeave={() => setHover(null)}
-              >
-                {/* row label */}
-                <text x={0} y={y + 13} fontSize={10} fill={s.status === "running" ? col : "#8b8b95"}
-                  className="font-medium">
-                  {s.agent === "claude-code" ? "claude" : s.agent} · {(s.project || "?").slice(0, 9)}
-                </text>
-                <text x={0} y={y + 23} fontSize={9} fill="#b0b0ba" className="tabular-nums">
-                  {fmtDur(s.exec_sec)}
-                </text>
-                {/* lifecycle hairline */}
-                <rect x={lx0} y={y + 12} width={lx1 - lx0} height={2} rx={1} fill="#dcdce2" />
-                {/* execution segments */}
-                {s.segments.map((seg, si) => {
-                  const s0 = X(t2m(seg.start));
-                  const s1 = Math.max(X(t2m(seg.end)), s0 + 1.5);
-                  return (
-                    <rect key={si} x={s0} y={y + 7} width={s1 - s0} height={12} rx={3}
-                      fill={col} fillOpacity={isSel(selection, key) ? 1 : 0.82}
-                      stroke={isSel(selection, key) ? "#18181b" : "none"} strokeWidth={1.4} />
+          {/* chapters: episodes + unknown gaps */}
+          {tl.has_observation && (
+            <div className="tl-row tl2-chapters">
+              <div className="tl-lab"><b>工作段</b></div>
+              <div className="tl-track">
+                {tl.unknown.filter((u) => endM(u.end, day) - startM(u.start, day) >= 2).map((u, i) => {
+                  const s = startM(u.start, day), e = endM(u.end, day);
+                  return inView(s, e) && (
+                    <div key={`u${i}`} className="tl2-unk" style={{ left: x(s), width: Math.max(3, w(s, e)) }} title={`未知 ${hm(s)}–${hm(e)} · 点击标注`}
+                      onClick={(ev) => { ev.stopPropagation(); if (!drag.current?.moved) onSelect({ kind: "unknown", interval: u }); }} />
                   );
                 })}
-                {s.status === "running" && (
-                  <circle cx={Math.min(lx1, LABEL_W + timeW)} cy={y + 13} r={3.5} fill={col} className="running-dot" />
-                )}
-                {/* wide invisible hit area */}
-                <rect x={lx0} y={y} width={Math.max(lx1 - lx0, 8)} height={ROW_H} fill="transparent" />
-              </g>
-            );
-          }))}
+                {tl.episodes.map((ep) => {
+                  const s = startM(ep.start, day), e = endM(ep.end, day);
+                  if (!inView(s, e)) return null;
+                  const ww = w(s, e), k = episodeKey(ep);
+                  return (
+                    <div key={k} className={`tl2-ep ${ep.is_category ? "cat" : ""} ${selEp === k ? "sel" : ""}`}
+                      style={{ left: x(s), width: Math.max(3, ww - 2), ["--c" as string]: ep.is_category ? "#a1a1aa" : projectColor(ep.label) }}
+                      title={`${episodeTitle(ep)} ${fmtHM(ep.start)}–${fmtHM(ep.end)}\n${ep.summary}`}
+                      onClick={(ev) => { ev.stopPropagation(); if (!drag.current?.moved) onSelect({ kind: "episode", key: k }); }}>
+                      {ww > 56 && <span>{episodeTitle(ep)}{ww > 150 ? ` · ${fmtDur(ep.human_sec)}` : ""}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-          <defs>
-            <pattern id="unk" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-              <rect width="6" height="6" fill="#fffbeb" />
-              <line x1="0" y1="0" x2="0" y2="6" stroke="#fbbf24" strokeWidth="2.5" />
-            </pattern>
-          </defs>
-        </svg>
+          {/* overview: everything on one lane */}
+          <div className="tl2-lane tl2-ov" style={{ position: "relative", height: ovH }}>
+            <div className="tl2-lab" style={{ height: ovH }}>
+              <span className="flex items-center gap-1.5"><b>全部</b></span>
+              <small>你 {fmtDur(tl.metrics.human_active_sec)}{tl.agent.length ? ` · agent ${fmtDur(tl.metrics.agent_exec_union_sec)}` : ""}</small>
+            </div>
+            <div className="tl2-track" style={{ left: LABEL_W, width: W }}>
+              <div className="tl2-hbg" style={{ top: 0, height: HUMAN_H }} />
+              {tl.away.map((iv, i) => {
+                const s0 = startM(iv.start, day), e0 = endM(iv.end, day);
+                return inView(s0, e0) && w(s0, e0) > 1.5 && (
+                  <div key={i} className="tl2-away" style={{ left: x(s0), width: w(s0, e0), height: HUMAN_H, borderRadius: 6 }} />
+                );
+              })}
+              {overview.runs.map((r, k) => {
+                const ww = w(r.s, r.e), other = r.key === OTHER;
+                const col = other ? "#c9ccd3" : projectColor(r.key);
+                const one = r.n === 1 && r.lead;
+                const name = other ? (r.lead?.project ?? "其他活动") : r.key;
+                const hot = r.lead != null && r.lead.i === hoverVisit;
+                return (
+                  <div key={k} className={`tl2-ovr ${other ? "cat" : ""} ${hot ? "hot" : ""}`}
+                    style={{ left: x(r.s), width: Math.max(1.5, ww - (ww > 4 ? 1 : 0)), height: HUMAN_H, background: col }}
+                    onMouseEnter={() => r.lead && onHoverVisit(r.lead.i)} onMouseLeave={() => onHoverVisit(null)}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (drag.current?.moved) return;
+                      if (one) onPickVisit(r.lead!.i);
+                      else { const pad = (r.e - r.s) * 0.08 + 0.5; onView(clamp([r.s - pad, r.e + pad])); }
+                    }}>
+                    {ww >= 40 && (
+                      <span className="lbl">
+                        <span className="t">{one ? placeOf(r.lead!) : name}</span>
+                        {ww >= 120 && <span className="m">{one ? `${r.lead!.appLabel} · ${durS(r.lead!.e - r.lead!.s)}` : `${durS(r.active)}${r.lead ? ` · ${placeOf(r.lead)}` : ""}`}</span>}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+              {/* agents, one thin line per project, stacked inside the lane */}
+              {[...overview.agentRows, ...(overview.extra.length ? ["__more"] : [])].map((key, ri) => {
+                const ls = key === "__more" ? lanes.filter((l) => overview.extra.includes(l.key)) : lanes.filter((l) => l.key === key);
+                const col = key === "__more" ? "#a1a1aa" : projectColor(key);
+                return ls.flatMap((l) => l.exec.filter(([s0, e0]) => e0 > a && s0 < b).map(([s0, e0, c], k) => (
+                  <div key={`${key}${l.key}${k}`} className="tl2-ova"
+                    style={{ left: x(s0), width: Math.max(1.5, w(s0, e0)), top: HUMAN_H + 8 + ri * OV_ROW, background: col, opacity: Math.min(1, 0.55 + 0.15 * c) }}
+                    title={`${l.label} agent ${hm(s0)}–${hm(e0)}${c > 1 ? ` · ${c} 个并行` : ""}`} />
+                )));
+              })}
+              {tl.evidence.filter((ev) => ev.kind === "agent_user").map((p) => {
+                const m = t2m(p.at);
+                return m >= a && m <= b && (
+                  <div key={p.id} className="tl2-pr" style={{ left: x(m), top: HUMAN_H + 1, borderBottomColor: projectColor(p.project ?? "Unassigned") }}
+                    title={`${p.at.slice(11, 19)} 你 → ${p.project ?? ""} agent\n${p.label}`} />
+                );
+              })}
+              {tl.evidence.filter((ev) => ev.kind === "commit").map((c) => {
+                const m = t2m(c.at);
+                return m >= a && m <= b && (
+                  <div key={c.id} className="tl2-cm" style={{ left: x(m), top: HUMAN_H - 4 }} title={`${c.at.slice(11, 19)} 提交 · ${c.repo}\n${c.label}`} />
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="tl-row">
+            <div className="tl-lab" />
+            <button className="tl2-toggle" onClick={(e) => { e.stopPropagation(); toggleDetail(); }}>
+              {detail ? "▾ 收起项目泳道" : `▸ 按项目展开 · ${lanes.length} 条泳道`}
+              {!detail && overview.agentRows.length > 0 && <span className="text-neutral-400"> · 总览底部细线 = 各项目的 agent 执行</span>}
+            </button>
+          </div>
+
+          {/* lanes (detail) */}
+          {detail && <div className="relative" style={{ height: lanesH }}>
+            {tl.away.map((iv, i) => {
+              const s = startM(iv.start, day), e = endM(iv.end, day);
+              return inView(s, e) && w(s, e) > 1.5 && (
+                <div key={i} className="tl2-away" style={{ left: LABEL_W + x(s), width: w(s, e), height: lanesH }} />
+              );
+            })}
+
+            {lanes.map((l, li) => {
+              const L = laneLayout[li], open = expanded.has(l.key);
+              // colour resolved at render: project colours load after the first paint
+              const color = l.key === OTHER ? "#a1a1aa" : projectColor(l.key);
+              const st = stretches.get(l.key) ?? [];
+              return (
+                <div key={l.key} className="tl2-lane" style={{ top: L.top, height: L.h }}>
+                  <button className="tl2-lab" style={{ height: L.h }}
+                    onClick={(e) => { e.stopPropagation(); if (!l.sessions.length) return;
+                      setExpanded((s) => { const n = new Set(s); if (n.has(l.key)) n.delete(l.key); else n.add(l.key); return n; }); }}>
+                    <span className="flex items-center gap-1.5">
+                      <i style={{ background: color }} />
+                      <b>{l.label}</b>
+                      {l.sessions.length > 0 && <span className="tl-caret">{open ? "▾" : "▸"}</span>}
+                    </span>
+                    <small>
+                      {l.humanMin > 0 && <>你 {fmtDur(l.humanMin * 60)}</>}
+                      {l.humanMin > 0 && l.sessions.length > 0 && " · "}
+                      {l.sessions.length > 0 && <>agent {fmtDur(l.execMin * 60)}</>}
+                    </small>
+                  </button>
+                  <div className="tl2-track" style={{ left: LABEL_W, width: W }}>
+                    {L.hasHuman && <div className="tl2-hbg" style={{ top: 0, height: HUMAN_H }} />}
+                    {L.hasHuman && st.map((g, k) => {
+                      const ww = w(g.s, g.e);
+                      const single = g.visits.length === 1;
+                      const lead = g.visits.reduce((p, q) => (q.e - q.s > p.e - p.s ? q : p));
+                      const cat = l.key === OTHER;
+                      const col = cat ? "#9ca3af" : color;
+                      const hot = g.visits.some((v) => v.i === hoverVisit);
+                      const label = cat ? `${lead.project} · ${placeOf(lead)}` : placeOf(lead);
+                      return (
+                        <div key={k}
+                          className={`tl2-st ${single ? "one" : "many"} ${cat ? "cat" : ""} ${hot ? "hot" : ""}`}
+                          style={{ left: x(g.s), width: Math.max(2, ww), height: HUMAN_H, ["--c" as string]: col }}
+                          onMouseEnter={() => onHoverVisit(lead.i)}
+                          onMouseLeave={() => onHoverVisit(null)}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            if (drag.current?.moved) return;
+                            if (single) onPickVisit(g.visits[0].i);
+                            else { const pad = (g.e - g.s) * 0.08 + 0.5; onView(clamp([g.s - pad, g.e + pad])); }
+                          }}>
+                          {!single && g.visits.map((v) => (
+                            <i key={v.i} style={{ left: x(v.s) - x(g.s), width: Math.max(1, w(v.s, v.e)) }} />
+                          ))}
+                          {ww >= 44 && (
+                            <span className="lbl">
+                              <span className="t">{label}</span>
+                              {ww >= 110 && <span className="m">{single ? `${lead.appLabel} · ${durS(g.e - g.s)}` : `${durS(g.active)} · ${g.visits.length} 个窗口`}</span>}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {L.hasAgent && (
+                      <div className="tl2-arow" style={{ top: L.ay - L.top, height: AGENT_H }}>
+                        {l.exec.map(([s, e, c], k) => inView(s, e) && (
+                          <div key={k} className="tl2-ex" style={{ left: x(s), width: Math.max(1.5, w(s, e)), background: color, opacity: Math.min(1, 0.35 + 0.18 * c) }}
+                            title={`${l.label} agent ${hm(s)}–${hm(e)} · ${c} 个并行`}>
+                            {c > 1 && w(s, e) > 22 && <span>×{c}</span>}
+                          </div>
+                        ))}
+                        {tl.evidence.filter((ev) => ev.kind === "agent_user" && (ev.project ?? "Unassigned") === l.key).map((p) => {
+                          const m = t2m(p.at);
+                          return m >= a && m <= b && (
+                            <div key={p.id} className="tl2-pr" style={{ left: x(m), borderBottomColor: color }} title={`${p.at.slice(11, 19)} 你 → agent\n${p.label}`} />
+                          );
+                        })}
+                        {tl.evidence.filter((ev) => ev.kind === "commit" && (ev.project ?? ev.repo) === l.key).map((c) => {
+                          const m = t2m(c.at);
+                          return m >= a && m <= b && (
+                            <div key={c.id} className="tl2-cm" style={{ left: x(m) }} title={`${c.at.slice(11, 19)} 提交 · ${c.repo}\n${c.label}`} />
+                          );
+                        })}
+                      </div>
+                    )}
+                    {open && l.sessions.map((s, si) => {
+                      const s0 = laneM(s.start, day, "start"), s1 = laneM(s.end, day, "end");
+                      return (
+                        <div key={s.id} className="tl2-srow" style={{ top: L.ay - L.top + AGENT_H + si * 20 }}
+                          onClick={(ev) => { ev.stopPropagation(); if (!drag.current?.moved) onSelect({ kind: "session", session: s }); }}>
+                          {inView(s0, s1) && <div className="tl-life" style={{ left: x(s0), width: w(s0, s1), background: color }} />}
+                          {s.segments.map((g, k) => {
+                            const g0 = laneM(g.start, day, "start"), g1 = laneM(g.end, day, "end");
+                            return inView(g0, g1) && (
+                              <div key={k} className={`tl2-sx ${selSession === s.id ? "sel" : ""}`}
+                                style={{ left: x(g0), width: Math.max(1.5, w(g0, g1)), background: color }}
+                                title={`${s.agent}${s.subagent ? " 子代理" : ""} #${s.id} · ${hm(g0)}–${hm(g1)}`} />
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {drawLinks && (
+              <svg className="tl2-links" style={{ left: LABEL_W, width: W, height: lanesH }}>
+                {ordered.map((v, k) => {
+                  if (k === 0) return null;
+                  const p = ordered[k - 1];
+                  const lp = laneIndex.get(laneKeyOf(p)), lv = laneIndex.get(laneKeyOf(v));
+                  if (lp == null || lv == null || lp === lv || v.s - p.e > 1) return null;
+                  const y1 = laneLayout[lp].hy + HUMAN_H / 2, y2 = laneLayout[lv].hy + HUMAN_H / 2;
+                  const x1 = x(p.e), x2 = x(v.s);
+                  const hot = hoverVisit === v.i || hoverVisit === p.i;
+                  return <path key={k} className={hot ? "hot" : ""} d={`M${x1},${y1} C${x1 + 12},${y1} ${x2 - 12},${y2} ${x2},${y2}`} />;
+                })}
+              </svg>
+            )}
+
+          </div>}
+
+          {/* now + cursor span chapters, overview and lanes alike */}
+          {nowM >= a && nowM <= b && <div className="tl2-now" style={{ left: LABEL_W + x(nowM), top: 0, bottom: 0 }} />}
+          {cursor != null && cursor >= a && cursor <= b && (
+            <div className="tl2-cursor" style={{ left: LABEL_W + x(cursor), top: -40, bottom: 0 }} />
+          )}
+        </div>
       </div>
 
-      {hover && hover.title && (
-        <div className="tl-tooltip" style={{
-          left: Math.min(Math.max(hover.x + 14, 8), Math.max(width - 290, 8)),
-          top: Math.min(hover.y + 14, 300),
-        }}>
-          <div className="tt-title">{hover.title}</div>
-          {hover.lines.map((l, i) => <div key={i} className="tt-line">{l}</div>)}
-        </div>
-      )}
+      <div className="tl-legend">
+        <span>总览:色块 = 那段时间你主要在哪个项目(放大后拆成单个窗口);下方细线 = 正在执行的 agent,每个项目一条</span>
+        <span>▲ 你发的 prompt · ◆ 提交</span>
+        <span><i className="away" />离开</span>
+      </div>
     </div>
   );
 }

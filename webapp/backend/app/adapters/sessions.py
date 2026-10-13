@@ -49,9 +49,33 @@ def _save_cursor(source_key, cursor):
 # ---------------- line parsers (one per agent flavor) ----------------
 
 def _cwd_from_dir(name: str) -> str:
-    """sanitized dir name → path guess: '-home-x-Projects-RSI' → /home/x/Projects/RSI."""
+    """sanitized dir name → path: '-home-x-Projects-ai-work-journal' →
+    /home/x/Projects/ai-work-journal. '-' is ambiguous (separator or literal),
+    so prefer the longest hyphen-joined component that exists on disk."""
     parts = [p for p in name.replace("--", "-").split("-") if p]
-    return "/" + "/".join(parts)
+    path, i = Path("/"), 0
+    while i < len(parts):
+        for j in range(len(parts), i, -1):
+            cand = path / "-".join(parts[i:j])
+            if cand.is_dir():
+                path, i = cand, j
+                break
+        else:
+            return str(path / "/".join(parts[i:]))
+    return str(path)
+
+
+def _session_dir(f: str, root) -> str:
+    """Directory directly under the sessions root (subagent transcripts live
+    deeper, in <project-dir>/<session-uuid>/subagents/)."""
+    p = Path(f)
+    if not root:
+        return p.parent.name
+    root = Path(root)
+    for parent in p.parents:
+        if parent.parent == root:
+            return parent.name
+    return p.parent.name
 
 
 def _first_text(content):
@@ -133,7 +157,7 @@ def _parse_claude_line(d: dict):
         return "msg_assistant", payload
     # user line: real user text or tool_result blocks
     if isinstance(content, str):
-        return "msg_user", {"role": "user", "text": content[:4000]}
+        return "msg_user", {"role": "user", "text": content[:4000], "cwd": d.get("cwd")}
     if isinstance(content, list):
         texts, results = [], []
         for p in content:
@@ -258,7 +282,7 @@ def _refresh_sessions(source: str, running_files: list):
         if not f:
             continue
         s = by_file.setdefault(f, {"cwd": None, "events": []})
-        if r["event_type"] == "session_meta" and p.get("cwd"):
+        if p.get("cwd") and (r["event_type"] == "session_meta" or not s["cwd"]):
             s["cwd"] = p["cwd"]
         s["events"].append((r["id"], r["event_type"], r["occurred_at"], p))
     now = iso(now_utc())
@@ -267,19 +291,18 @@ def _refresh_sessions(source: str, running_files: list):
         first, last = evs[0][2], evs[-1][2]
         status = "running" if f in running_files else "ended"
         cwd = s["cwd"]
-        if not cwd and source != "pi":
-            cwd = _cwd_from_dir(Path(f).parent.name)
-        if not cwd and source == "pi":
-            cwd = _cwd_from_dir(Path(f).parent.name.replace("--", "-"))
+        if not cwd:
+            root = config.PI_SESSIONS_DIR if source == "pi" else config.CLAUDE_SESSIONS_DIR
+            cwd = _cwd_from_dir(_session_dir(f, root))
         existing = db.q1("SELECT id, status FROM agent_sessions WHERE source=? AND external_id=?",
                          (source, f))
         if existing:
             db.ex("UPDATE agent_sessions SET cwd=?, start_at=?, end_at=?, status=? WHERE id=?",
-                  (s["cwd"], first, last, status, existing["id"]))
+                  (cwd, first, last, status, existing["id"]))
             sid = existing["id"]
         else:
             db.ex("INSERT INTO agent_sessions(source,external_id,cwd,start_at,end_at,status) "
-                  "VALUES(?,?,?,?,?,?)", (source, f, s["cwd"], first, last, status))
+                  "VALUES(?,?,?,?,?,?)", (source, f, cwd, first, last, status))
             sid = db.q1("SELECT id FROM agent_sessions WHERE source=? AND external_id=?",
                         (source, f))["id"]
         # link events to session (idempotent)

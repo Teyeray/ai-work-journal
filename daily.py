@@ -39,8 +39,31 @@ def run_pi(prompt, attachment, timeout=900):
     return r.stdout.strip()
 
 
+# --- schedule (set from the web dashboard's 日报 page) ---------------------
+# Honoured only when systemd's timer starts us (INVOCATION_ID set, no args);
+# a manual `journal daily` always runs.
+SCHEDULE_FILE = Path.home() / ".config" / "ai-work-journal" / "schedule.json"
+
+
+def load_schedule() -> dict:
+    import json as _json
+    try:
+        return {"daily_weekdays": [1, 2, 3, 4, 5, 6, 7], "weekly_enabled": True, "feishu_push": True,
+                **_json.loads(SCHEDULE_FILE.read_text(encoding="utf-8"))}
+    except (OSError, ValueError):
+        return {"daily_weekdays": [1, 2, 3, 4, 5, 6, 7], "weekly_enabled": True, "feishu_push": True}
+
+
+def started_by_timer() -> bool:
+    import os as _os
+    return bool(_os.environ.get("INVOCATION_ID")) and len(sys.argv) == 1
+
+
 def main():
     d = parse_date(sys.argv[1] if len(sys.argv) > 1 else None)
+    if started_by_timer() and d.isoweekday() not in load_schedule()["daily_weekdays"]:
+        print(f"skipped by schedule: {d} is weekday {d.isoweekday()}")
+        return
     digest = DATA / f"{d.isoformat()}.digest.md"
     # always re-collect: manual runs earlier in the day must not pin stale data
     r = subprocess.run([sys.executable, str(BASE / "collect.py"), d.isoformat()],
@@ -69,10 +92,13 @@ def main():
     report_path.write_text(header + out + "\n", encoding="utf-8")
     print(f"report written: {report_path}")
     # best-effort feishu push
-    fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(report_path)],
-                        capture_output=True, text=True)
-    if fe.stdout.strip():
-        print(fe.stdout.strip())
+    if load_schedule()["feishu_push"]:
+        fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(report_path)],
+                            capture_output=True, text=True)
+        if fe.stdout.strip():
+            print(fe.stdout.strip())
+    else:
+        print("feishu push disabled in schedule")
     # best-effort dashboard refresh so the day lands in the charts
     try:
         db = subprocess.run([sys.executable, str(BASE / "dashboard.py")],

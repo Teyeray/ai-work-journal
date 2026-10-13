@@ -63,3 +63,35 @@ def scan() -> dict:
                     affected_days.add(local_day_key(ts))
         db.log_sync("git", total_new)
     return {"source": "git", "new": total_new, "days": sorted(affected_days)}
+
+
+_AUTHORS = {}
+
+
+def my_authors(paths) -> set:
+    """Who 'you' are in git: the global user.name plus each repo's local
+    user.name (e.g. a GitHub identity set only in some repos), plus any
+    extra names in webapp/config.json "git_authors". Commits by anyone else
+    (collaborators' work pulled into your clones) are not your output."""
+    key = frozenset(p for p in paths if p)
+    if key in _AUTHORS:
+        return _AUTHORS[key]
+    names = {n for n in config.GIT_AUTHORS}
+
+    def get(args):
+        try:
+            r = subprocess.run(["git", *args, "config", "user.name"], capture_output=True, text=True, timeout=5)
+            return r.stdout.strip()
+        except Exception:
+            return ""
+    names.add(get([]))
+    for p in key:
+        names.add(get(["-C", p]))
+    names.discard("")
+    _AUTHORS[key] = names
+    return names
+
+
+def is_mine(payload: dict, paths) -> bool:
+    author = payload.get("author")
+    return not author or author in my_authors(paths)

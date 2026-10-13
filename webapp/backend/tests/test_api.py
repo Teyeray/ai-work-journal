@@ -121,3 +121,19 @@ def test_evidence_redaction(env):
     assert r.status_code == 200
     assert "sk-ant-abc123def456" not in json.dumps(r.json())
     assert "REDACTED" in json.dumps(r.json())
+
+
+def test_cold_cache_concurrent_requests_do_not_conflict(env):
+    """/timeline and /today hit a cold day at the same time: both must succeed."""
+    import threading
+    from fastapi.testclient import TestClient
+    from app.api import app
+    c = TestClient(app)
+    codes = []
+    ts = [threading.Thread(target=lambda u=u: codes.append(c.get(u).status_code))
+          for u in ("/api/v1/timeline?day=2026-10-06", "/api/v1/today?day=2026-10-06") * 3]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert codes == [200] * 6

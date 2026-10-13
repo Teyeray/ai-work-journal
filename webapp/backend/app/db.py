@@ -39,6 +39,28 @@ def migrate(conn: sqlite3.Connection) -> None:
             if "project_label" not in cols:
                 conn.execute("ALTER TABLE agent_sessions ADD COLUMN project_label TEXT")
             conn.execute("PRAGMA user_version = 2")
+        if v < 3:
+            # semantic labels for window titles that carry no keyword/path evidence
+            conn.execute("""CREATE TABLE IF NOT EXISTS llm_title_labels (
+                key TEXT PRIMARY KEY,          -- sha1(app \\n cleaned title)
+                app TEXT, title TEXT,
+                project TEXT,                  -- NULL = model found no project
+                confidence REAL, why TEXT, model TEXT,
+                projects_sig TEXT NOT NULL,    -- project set the answer was given against
+                created_at TEXT NOT NULL)""")
+            conn.execute("PRAGMA user_version = 3")
+        if v < 4:
+            # "问 AI" conversations; messages keep the full OpenAI turn (incl. tool calls)
+            conn.execute("""CREATE TABLE IF NOT EXISTS chat_threads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id INTEGER NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+                turn INTEGER NOT NULL,         -- one user question + everything it caused
+                role TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id, id)")
+            conn.execute("PRAGMA user_version = 4")
 
 
 def q(sql, params=()):

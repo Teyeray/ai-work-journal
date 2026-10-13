@@ -15,6 +15,9 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 _SANDBOX = Path(tempfile.mkdtemp(prefix="ai-journal-test-"))
 os.environ["JOURNAL_WEB_DB"] = str(_SANDBOX / "test.db")
+os.environ["JOURNAL_LLM_DISABLE"] = "1"   # tests never call the network
+os.environ["JOURNAL_AUTOSYNC"] = "0"           # no background sync thread work in tests
+os.environ["JOURNAL_SCHEDULE_FILE"] = str(_SANDBOX / "schedule.json")
 os.environ["TZ"] = "Asia/Singapore"
 time.tzset()
 sys.path.insert(0, str(BACKEND))
@@ -24,7 +27,7 @@ from app import config, db, timeutil  # noqa: E402
 _TABLES = ("source_events", "source_cursors", "agent_sessions", "session_event_links",
            "projects", "manual_overrides", "session_reviews", "review_feedback",
            "analysis_jobs", "daily_projections", "sync_log", "outcomes",
-           "planned_blocks")
+           "planned_blocks", "llm_title_labels", "chat_messages", "chat_threads")
 
 
 @pytest.fixture()

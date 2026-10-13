@@ -98,3 +98,98 @@ def test_review_parse(env):
     assert d["suggestions"] == ["a", "b"]
     assert reviews._parse("no json here") is None
     assert reviews._parse('{"prompt_goal":999}') is None  # out of range rejected
+
+
+def _claude_line(ts, text, cwd=None):
+    d = {"type": "user", "timestamp": ts, "message": {"role": "user", "content": text}}
+    if cwd:
+        d["cwd"] = cwd
+    return json.dumps(d) + "\n"
+
+
+def test_claude_session_cwd_from_project_dir_incl_subagents(env, tmp_path):
+    """Lines without cwd (and subagent transcripts nested two levels deeper)
+    still resolve the project from the sanitized dir under the sessions root;
+    hyphenated directory names are resolved against the filesystem."""
+    from app import db
+    from app.adapters import sessions
+    proj = tmp_path / "Projects" / "ai-work-journal"
+    proj.mkdir(parents=True)
+    dirname = str(proj).replace("/", "-")
+    d = "2026-10-03"
+    main = env.CLAUDE_SESSIONS_DIR / dirname / "s1.jsonl"
+    sub = env.CLAUDE_SESSIONS_DIR / dirname / "s1" / "subagents" / "agent-a.jsonl"
+    _write(main, [_claude_line(f"{d}T09:00:00Z", "hi")])
+    _write(sub, [_claude_line(f"{d}T09:01:00Z", "extract")])
+    sessions.scan("claude")
+    cwds = {r["cwd"] for r in db.q("SELECT cwd FROM agent_sessions WHERE source='claude'")}
+    assert cwds == {str(proj)}
+
+
+def test_claude_line_cwd_wins_over_dir(env):
+    from app import db
+    from app.adapters import sessions
+    d = "2026-10-03"
+    f = env.CLAUDE_SESSIONS_DIR / "-home-x-elsewhere" / "s2.jsonl"
+    _write(f, [_claude_line(f"{d}T09:00:00Z", "hi", cwd="/home/x/Projects/RSI")])
+    sessions.scan("claude")
+    assert db.q1("SELECT cwd FROM agent_sessions WHERE source='claude'")["cwd"] == "/home/x/Projects/RSI"
+
+
+def test_session_list_titles_and_folds_subagents(env, tmp_path):
+    from fastapi.testclient import TestClient
+    from app.api import app
+    from app.adapters import sessions
+    d = "2026-10-03"
+    proj = env.CLAUDE_SESSIONS_DIR / "-home-x-Projects-RSI"
+    _write(proj / "u1.jsonl", [
+        _claude_line(f"{d}T01:00:00Z", "<command-name>/x</command-name>"),     # injected, not a title
+        _claude_line(f"{d}T01:00:05Z", "复现 HarnessLens 的 BIRD 四格"),
+        _claude_line(f"{d}T01:03:00Z", "再跑一遍验证"),
+    ])
+    _write(proj / "u1" / "subagents" / "agent-a.jsonl", [_claude_line(f"{d}T01:01:00Z", "extract papers 1-10")])
+    sessions.scan("claude")
+    c = TestClient(app)
+    rows = c.get(f"/api/v1/sessions?day={d}").json()["sessions"]
+    assert len(rows) == 1
+    top = rows[0]
+    assert top["title"] == "复现 HarnessLens 的 BIRD 四格" and top["prompts"] == 2
+    assert len(top["children"]) == 1 and top["exec_sec"] == 180
+    allr = c.get(f"/api/v1/sessions?day={d}&subagents=true").json()["sessions"]
+    sub = next(r for r in allr if r["subagent"])
+    assert sub["parent_id"] == top["id"] and sub["prompts"] == 0
+
+
+def test_session_times_are_local(env):
+    from fastapi.testclient import TestClient
+    from app.api import app
+    from app.adapters import sessions
+    _write(env.CLAUDE_SESSIONS_DIR / "-home-x-Projects-RSI" / "u9.jsonl",
+           [_claude_line("2026-10-03T05:20:00Z", "hello there agent")])
+    sessions.scan("claude")
+    r = TestClient(app).get("/api/v1/sessions?day=2026-10-03").json()["sessions"][0]
+    assert r["start_at"][11:16] == "13:20"   # TZ in tests is Asia/Singapore (+08:00)
+    d = TestClient(app).get(f"/api/v1/sessions/{r['id']}").json()
+    assert d["events"][0]["at"][11:16] == "13:20"
+
+
+def test_long_running_session_is_described_by_the_selected_day(env):
+    """A session opened days ago and still going is listed by that day's work."""
+    from fastapi.testclient import TestClient
+    from app.api import app
+    from app.adapters import sessions
+    _write(env.CLAUDE_SESSIONS_DIR / "-home-x-Projects-RSI" / "long.jsonl", [
+        _claude_line("2026-10-01T02:00:00Z", "first task from monday"),
+        _claude_line("2026-10-03T01:00:00Z", "morning follow-up please"),
+        _claude_line("2026-10-03T01:05:00Z", "latest instruction today"),
+    ])
+    sessions.scan("claude")
+    r = TestClient(app).get("/api/v1/sessions?day=2026-10-03").json()["sessions"][0]
+    assert r["title"] == "first task from monday"
+    assert r["carried"] is True
+    g = r["range"]
+    assert g["prompts"] == 2 and g["last_prompt"] == "latest instruction today"
+    assert g["first_at"][11:16] == "09:00" and g["last_at"][11:16] == "09:05"
+    assert g["exec_sec"] == 300
+    r1 = TestClient(app).get("/api/v1/sessions?day=2026-10-01").json()["sessions"][0]
+    assert r1["carried"] is False and r1["range"]["prompts"] == 1
