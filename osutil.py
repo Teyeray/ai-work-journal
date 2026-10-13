@@ -415,7 +415,8 @@ def schedule_status(kind: str) -> dict:
             if r.returncode == 0:
                 f = dict((k.strip(), v.strip()) for k, v in
                          (l.split(":", 1) for l in r.stdout.splitlines() if ":" in l))
-                res = f.get("Last Result", "")
+                # 267011 = 0x41303 "has not yet run", 267009 = 0x41301 "currently running"
+                res = {"267011": "", "267009": "0"}.get(f.get("Last Result", ""), f.get("Last Result", ""))
                 out.update(installed=True, timer_active=f.get("Scheduled Task State", "Enabled") == "Enabled",
                            calendar=(f"{_WD[j['weekday'] - 1]} " if j["weekday"] else "daily ") + j["at"],
                            next_run=_stamp(f.get("Next Run Time")) or _next_local(kind),

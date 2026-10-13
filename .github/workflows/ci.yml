@@ -55,11 +55,13 @@ jobs:
         run: |
           python journal.py schedule install
           python journal.py schedule status
-          python -c "import osutil, sys; s = osutil.schedule_status('daily'); print(s); sys.exit(0 if s['installed'] and s['next_run'] else 1)"
+          python -c "import osutil, sys; s = osutil.schedule_status('daily'); print(s); sys.exit(0 if s['installed'] and s['next_run'] and s['last_result'] in (None, 'success') else 1)"
           python journal.py schedule remove
           python -c "import osutil, sys; sys.exit(1 if osutil.schedule_status('daily')['installed'] else 0)"
       - name: Demo server answers
         shell: bash
+        env:
+          PYTHONUTF8: "1"
         run: |
           python journal.py demo --no-open
           python - <<'PY'
