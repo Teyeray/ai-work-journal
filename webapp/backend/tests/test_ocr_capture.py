@@ -210,3 +210,16 @@ def test_config_local_overlay_and_path_expansion(tmp_path, monkeypatch):
 ])
 def test_clean_strips_boxes_fences_and_html_from_model_output(raw, want):
     assert ocr.clean(raw) == want
+
+
+def test_windows_paths_in_titles_and_claude_dir_collisions(tmp_path, monkeypatch):
+    from app import projects
+    from app.adapters import sessions
+    assert projects._PATH_IN_TITLE.findall(r"notes (C:\Users\a\proj\README.md) ~/p/q") == [r"C:\Users\a\proj\README.md", "~/p/q"]
+    # ~/kaggle and ~/.kaggle both encode to "kaggle": the real name wins
+    (tmp_path / "kaggle" / "GOOGLE-GEMMA").mkdir(parents=True)
+    (tmp_path / ".kaggle").mkdir()
+    (tmp_path / "my_proj.v2").mkdir()
+    enc = sessions._enc(str(tmp_path))
+    assert sessions._cwd_from_dir(f"-{enc}-kaggle-GOOGLE-GEMMA") == str(tmp_path / "kaggle" / "GOOGLE-GEMMA")
+    assert sessions._cwd_from_dir(f"-{enc}-my-proj-v2") == str(tmp_path / "my_proj.v2")

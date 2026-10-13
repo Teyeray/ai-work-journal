@@ -12,6 +12,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -48,20 +49,38 @@ def _save_cursor(source_key, cursor):
 
 # ---------------- line parsers (one per agent flavor) ----------------
 
+def _enc(name: str) -> str:
+    """Claude Code's directory naming: every non-alphanumeric character → '-'
+    (compared with runs of '-' collapsed, since '/.' and ':\\' both make '--')."""
+    return re.sub(r"-+", "-", re.sub(r"[^A-Za-z0-9-]", "-", name)).strip("-")
+
+
 def _cwd_from_dir(name: str) -> str:
     """sanitized dir name → path: '-home-x-Projects-ai-work-journal' →
-    /home/x/Projects/ai-work-journal. '-' is ambiguous (separator or literal),
-    so prefer the longest hyphen-joined component that exists on disk."""
-    parts = [p for p in name.replace("--", "-").split("-") if p]
-    path, i = Path("/"), 0
+    /home/x/Projects/ai-work-journal; 'C--Users-x-proj' → C:\\Users\\x\\proj.
+    The encoding is lossy ('-', '_', '.' all became '-'), so walk the disk:
+    at each level take the longest run of parts that names an existing
+    directory once encoded the same way."""
+    root = Path("/")
+    drive = re.match(r"^([A-Za-z])--(.*)$", name) if os.name == "nt" else None
+    if drive:
+        root, name = Path(drive.group(1) + ":\\"), drive.group(2)
+    parts = [p for p in name.split("-") if p]
+    path, i = root, 0
     while i < len(parts):
+        try:
+            kids = {_enc(c.name): c for c in path.iterdir() if c.is_dir()}
+        except OSError:
+            kids = {}
         for j in range(len(parts), i, -1):
-            cand = path / "-".join(parts[i:j])
-            if cand.is_dir():
+            joined = "-".join(parts[i:j])
+            exact = path / joined          # a real name beats an encoding collision (~/x vs ~/.x)
+            cand = exact if exact.is_dir() else kids.get(joined)
+            if cand is not None:
                 path, i = cand, j
                 break
         else:
-            return str(path / "/".join(parts[i:]))
+            return str(path.joinpath(*parts[i:]))
     return str(path)
 
 

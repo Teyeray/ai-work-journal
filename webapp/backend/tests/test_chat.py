@@ -150,6 +150,7 @@ def test_screen_restart_runs_systemctl_and_marks_awaiting_approval(monkeypatch):
     calls = []
     monkeypatch.setattr(chat.config, "SP_URL", "http://sp")
     monkeypatch.setattr(chat.config, "SP_SERVICE", "screenpipe.service")
+    monkeypatch.setattr(chat.config.osutil, "SYSTEM", "linux")
     monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
     chat._SP_STATUS.update(at=0, v=None, restarted_at=0)
     r = TestClient(app).post("/api/v1/screen/restart")

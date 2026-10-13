@@ -243,7 +243,7 @@ def _agent_lane(day_key: str):
         n_user = sum(1 for e in evs if e["event_type"] == "msg_user")
         project = projects.classify_for_session(r["cwd"])
         # a subagent transcript's "user" turns are written by the parent agent
-        subagent = "/subagents/" in (r["external_id"] or "")
+        subagent = "/subagents/" in (r["external_id"] or "").replace("\\", "/")
         prompts = []
         for e in evs:
             if subagent or e["event_type"] != "msg_user":

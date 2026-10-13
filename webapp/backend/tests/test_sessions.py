@@ -1,5 +1,6 @@
 """Session JSONL adapter: incremental scan, idempotency, truncation recovery."""
 import json
+import re
 import time
 
 
@@ -115,7 +116,7 @@ def test_claude_session_cwd_from_project_dir_incl_subagents(env, tmp_path):
     from app.adapters import sessions
     proj = tmp_path / "Projects" / "ai-work-journal"
     proj.mkdir(parents=True)
-    dirname = str(proj).replace("/", "-")
+    dirname = re.sub(r"[^A-Za-z0-9-]", "-", str(proj))   # how Claude Code names it, on any OS
     d = "2026-10-03"
     main = env.CLAUDE_SESSIONS_DIR / dirname / "s1.jsonl"
     sub = env.CLAUDE_SESSIONS_DIR / dirname / "s1" / "subagents" / "agent-a.jsonl"

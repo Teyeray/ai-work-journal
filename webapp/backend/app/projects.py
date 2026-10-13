@@ -21,6 +21,7 @@ Unknown apps never become projects. explain() returns the reason with the label
 so the UI can say *why* a window was filed where it was.
 """
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -37,7 +38,17 @@ SKIP_DIRS = {d.lower() for d in CLS["skip_dirs"]}
 
 _SEP = re.compile(r"[\s_\-./\\:|·,;()\[\]{}]+")
 # absolute or ~-relative paths that appear as their own token in a title
-_PATH_IN_TITLE = re.compile(r"(?:^|(?<=[\s(\[:'\"]))(~?/[^\s()\[\]'\"|]+)")
+# POSIX (/x, ~/x) and Windows (C:\x, C:/x) paths inside a window title
+_PATH_IN_TITLE = re.compile(r"(?:^|(?<=[\s(\[:'\"]))(~?/[^\s()\[\]'\"|]+|[A-Za-z]:[\\/][^\s()\[\]'\"|]+)")
+
+
+def _npath(p) -> str:
+    """Comparable path: ~ expanded, forward slashes, no trailing slash;
+    case-insensitive on Windows."""
+    s = str(Path(p).expanduser()).replace("\\", "/").rstrip("/")
+    return s.lower() if os.name == "nt" else s
+
+
 _ASCII = re.compile(r"^[\x00-\x7f]+$")
 
 
@@ -144,7 +155,7 @@ class _Compiled:
                 continue
             label = self.label_of(r["name"], by_name)
             for p in rules["paths"]:
-                self.paths.append((str(Path(p).expanduser()).rstrip("/"), label))
+                self.paths.append((_npath(p), label))
             for p in rules["patterns"]:
                 try:
                     self.patterns.append((re.compile(p, re.I), p, label))
@@ -171,7 +182,7 @@ class _Compiled:
         c = copy.copy(self)
         c.paths, c.patterns, c.aliases = list(self.paths), list(self.patterns), list(self.aliases)
         if kind == "path":
-            c.paths.append((str(Path(value).expanduser()).rstrip("/"), project))
+            c.paths.append((_npath(value), project))
             c.paths.sort(key=lambda x: -len(x[0]))
         elif kind == "pattern":
             c.patterns.insert(0, (re.compile(value, re.I), value, project))
@@ -190,7 +201,7 @@ class _Compiled:
         return name
 
     def match_path(self, path: str):
-        p = str(Path(path).expanduser()).rstrip("/")
+        p = _npath(path)
         for root, label in self.paths:
             if p == root or p.startswith(root + "/"):
                 return label, root

@@ -53,7 +53,7 @@ def summarize(r) -> dict:
     evs = db.q("SELECT e.event_type, e.occurred_at, e.payload FROM session_event_links l "
                "JOIN source_events e ON e.id = l.event_id WHERE l.session_id=? ORDER BY l.ordinal",
                (r["id"],))
-    sub = "/subagents/" in (r["external_id"] or "")
+    sub = "/subagents/" in (r["external_id"] or "").replace("\\", "/")
     title, first_any, prompts, tools, tokens, models = None, None, 0, 0, 0, set()
     ts, acts = [], []
     for e in evs:
