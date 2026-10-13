@@ -220,6 +220,7 @@ def test_windows_paths_in_titles_and_claude_dir_collisions(tmp_path, monkeypatch
     (tmp_path / "kaggle" / "GOOGLE-GEMMA").mkdir(parents=True)
     (tmp_path / ".kaggle").mkdir()
     (tmp_path / "my_proj.v2").mkdir()
-    enc = sessions._enc(str(tmp_path))
-    assert sessions._cwd_from_dir(f"-{enc}-kaggle-GOOGLE-GEMMA") == str(tmp_path / "kaggle" / "GOOGLE-GEMMA")
-    assert sessions._cwd_from_dir(f"-{enc}-my-proj-v2") == str(tmp_path / "my_proj.v2")
+    import re
+    enc = re.sub(r"[^A-Za-z0-9-]", "-", str(tmp_path))      # '/tmp/x' → '-tmp-x', 'C:\\x' → 'C--x'
+    assert sessions._cwd_from_dir(f"{enc}-kaggle-GOOGLE-GEMMA") == str(tmp_path / "kaggle" / "GOOGLE-GEMMA")
+    assert sessions._cwd_from_dir(f"{enc}-my-proj-v2") == str(tmp_path / "my_proj.v2")
