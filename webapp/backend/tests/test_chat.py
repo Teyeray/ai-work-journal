@@ -161,3 +161,26 @@ def test_screen_restart_runs_systemctl_and_marks_awaiting_approval(monkeypatch):
     st = chat.screen_status()
     assert st["state"] == "stalled" and st["awaiting_approval"] and st["restartable"]
     chat._SP_STATUS.update(at=0, v=None, restarted_at=0)
+
+
+def test_missing_screencast_portal_is_named_and_restart_fixes_the_portal_first(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(chat.config, "SP_URL", "http://sp")
+    monkeypatch.setattr(chat.config, "SP_SERVICE", "screenpipe.service")
+    monkeypatch.setattr(chat.config.osutil, "SYSTEM", "linux")
+    monkeypatch.setattr(chat, "SP_LOG_DIR", tmp_path)
+    (tmp_path / "screenpipe.2026-10-13.0.log").write_text(
+        "INFO requesting one-time Wayland screen-share approval for all selected monitors\n"
+        "WARN Wayland PipeWire capture failed: failed to connect to xdg-desktop-portal ScreenCast: "
+        "A portal frontend implementing `org.freedesktop.portal.ScreenCast` was not found\n")
+    monkeypatch.setattr(chat, "_sp_health", lambda: {"last_frame_timestamp": "2026-10-13T01:10:34+00:00",
+                                                     "vision_db_write_stalled": True, "monitors": ["a", "b"]})
+    chat._SP_STATUS.update(at=0, v=None, restarted_at=0)
+    st = chat.screen_status()
+    assert st["state"] == "stalled" and st["portal_broken"] and "xdg-desktop-portal" in st["reason"]
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    assert chat.restart_screen()["ok"]
+    assert calls == [["systemctl", "--user", "restart", "xdg-desktop-portal.service"],
+                     ["systemctl", "--user", "restart", "screenpipe.service"]]
+    chat._SP_STATUS.update(at=0, v=None, restarted_at=0)

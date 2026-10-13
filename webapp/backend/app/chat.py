@@ -323,7 +323,9 @@ def _sp_health() -> dict:
 
 
 def _sp_log_cause() -> str:
-    """The capture error screenpipe keeps logging, if it is the Wayland portal one."""
+    """The capture error screenpipe keeps logging: 'no_portal' when the desktop
+    portal has no ScreenCast backend (e.g. it was started under another
+    desktop session and kept running), 'wayland' when approval is missing."""
     logs = sorted(SP_LOG_DIR.glob("screenpipe.*.log"))
     if not logs:
         return ""
@@ -331,7 +333,12 @@ def _sp_log_cause() -> str:
         f.seek(0, 2)
         f.seek(max(0, f.tell() - 400_000))
         tail = f.read().decode("utf-8", "replace")
-    return "wayland" if "Wayland screen-share approval" in tail else ""
+    # judge by the most recent of the two signatures
+    np, wl = tail.rfind("portal frontend implementing `org.freedesktop.portal.ScreenCast` was not found"), \
+        tail.rfind("Wayland screen-share approval")
+    if np >= 0 and np >= wl - 400:      # the 'not found' line follows the approval request
+        return "no_portal"
+    return "wayland" if wl >= 0 else ""
 
 
 def screen_status() -> dict:
@@ -374,7 +381,13 @@ def screen_status() -> dict:
         v["hint"] = "对话框可能在别的窗口后面或另一块屏上,按 Super 键在概览里找;错过了可以再点一次重启"
     elif h.get("vision_db_write_stalled") or age is None or age > 30 * 60:
         v["state"] = "stalled"
-        if _sp_log_cause() == "wayland":
+        cause = _sp_log_cause()
+        if cause == "no_portal":
+            v["reason"] = ("系统的屏幕共享服务(xdg-desktop-portal)找不到 ScreenCast 后端,授权框弹不出来"
+                           "——常见于切换过桌面环境后门户服务还按旧桌面在运行")
+            v["hint"] = "点「重启截屏」:会先重启门户服务,再重启 screenpipe,然后弹出授权框"
+            v["portal_broken"] = True
+        elif cause == "wayland":
             v["reason"] = "Wayland 屏幕共享授权失效或没有被允许(常见于锁屏/注销后,或错过了授权对话框)"
             v["hint"] = "点「重启截屏」,然后在弹出的屏幕共享对话框里选上所有显示器并允许"
         else:
@@ -391,6 +404,10 @@ def restart_screen() -> dict:
         return {"ok": False, "error": "没有配置 screenpipe 服务(config.json sp_service)"}
     if time.time() - _SP_STATUS["restarted_at"] < 15:
         return {"ok": False, "error": "刚刚重启过,稍等几秒"}
+    if config.osutil.SYSTEM == "linux" and _sp_log_cause() == "no_portal":
+        # the portal process inherited another desktop's environment: restart
+        # it under the current session so ScreenCast resolves to the right backend
+        config.osutil.restart_service("xdg-desktop-portal.service")
     ok, err = config.osutil.restart_service(config.SP_SERVICE)
     if not ok:
         return {"ok": False, "error": err or "重启失败"}
