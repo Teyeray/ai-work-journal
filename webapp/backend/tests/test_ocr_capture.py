@@ -196,6 +196,7 @@ def test_config_local_overlay_and_path_expansion(tmp_path, monkeypatch):
     (tmp_path / "config.json").write_text(json.dumps({"pi_dir": "~/.pi/s", "project_roots": ["~/P"], "a": {"x": 1, "y": 2}}))
     (tmp_path / "config.local.json").write_text(json.dumps({"a": {"y": 3}, "aw_host": "me"}))
     monkeypatch.setattr(osutil, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("JOURNAL_NO_LOCAL_CONFIG")
     c = osutil.load_config(tmp_path, "config.json")
     assert c["a"] == {"x": 1, "y": 3} and c["aw_host"] == "me"
     assert not c["pi_dir"].startswith("~") and not c["project_roots"][0].startswith("~")

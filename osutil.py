@@ -129,7 +129,8 @@ def load_config(base: Path = REPO_ROOT, name: str = "config.json") -> dict:
     """<name> (shared defaults, committed) deep-merged with <name stem>.local.json
     (your machine: paths, ids — gitignored). Paths are expanded; tool paths are
     resolved on PATH when not given absolutely."""
-    cfg = _merge(_read_json(base / name), _read_json(base / name.replace(".json", ".local.json")))
+    local = {} if os.environ.get("JOURNAL_NO_LOCAL_CONFIG") else _read_json(base / name.replace(".json", ".local.json"))
+    cfg = _merge(_read_json(base / name), local)
     if base == REPO_ROOT and name == "config.json":
         for k in _PATH_KEYS:
             if cfg.get(k):

@@ -1,0 +1,37 @@
+{
+  "seed_projects": {
+    "RSI": {
+      "aliases": [
+        "rsi",
+        "memoharness",
+        "memo harness",
+        "darwin godel",
+        "self-improving",
+        "harness"
+      ]
+    },
+    "CASMI": {
+      "aliases": [
+        "casmi",
+        "enveda",
+        "mass spectra"
+      ]
+    },
+    "ai-work-journal": {
+      "aliases": [
+        "ai-work-journal",
+        "工作日志",
+        "工作看板"
+      ]
+    },
+    "paperfacts-dev": {
+      "parent": "paperfacts"
+    },
+    "paperfacts-fig": {
+      "parent": "paperfacts"
+    },
+    "agent_sources": {
+      "ignore": true
+    }
+  }
+}

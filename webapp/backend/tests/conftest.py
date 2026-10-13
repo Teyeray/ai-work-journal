@@ -22,11 +22,16 @@ os.environ["TZ"] = "Asia/Singapore"
 os.environ["JOURNAL_TZ"] = "Asia/Singapore"
 os.environ["JOURNAL_CONFIG_DIR"] = str(_SANDBOX / "config")
 os.environ["JOURNAL_CACHE_DIR"] = str(_SANDBOX / "cache")
+os.environ["JOURNAL_NO_LOCAL_CONFIG"] = "1"   # hermetic: never this machine's *.local.json
 if hasattr(time, "tzset"):   # POSIX; on Windows JOURNAL_TZ alone sets the zone
     time.tzset()
 sys.path.insert(0, str(BACKEND))
 
 from app import config, db, timeutil  # noqa: E402
+
+# the classification rules the tests are written against (RSI, CASMI, paperfacts …)
+config.CLASSIFICATION = {**config.CLASSIFICATION, **json.loads(
+    (Path(__file__).parent / "fixtures" / "classification.json").read_text(encoding="utf-8"))}
 
 _TABLES = ("screen_captures", "ocr_cache", "source_events", "source_cursors", "agent_sessions", "session_event_links",
            "projects", "manual_overrides", "session_reviews", "review_feedback",
