@@ -38,6 +38,43 @@ jobs:
           python journal.py schedule status
           python -c "import collect, daily, weekly, analyze, dashboard, feishu, osutil; print(osutil.SYSTEM, osutil.config_dir())"
 
+  e2e:
+    name: real OS integration · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r webapp/requirements.txt -r webapp/requirements-capture.txt
+      - name: Scheduler (launchd / Task Scheduler) install → status → remove
+        run: |
+          python journal.py schedule install
+          python journal.py schedule status
+          python -c "import osutil, sys; s = osutil.schedule_status('daily'); print(s); sys.exit(0 if s['installed'] and s['next_run'] else 1)"
+          python journal.py schedule remove
+          python -c "import osutil, sys; sys.exit(1 if osutil.schedule_status('daily')['installed'] else 0)"
+      - name: Demo server answers
+        shell: bash
+        run: |
+          python journal.py demo --no-open
+          python - <<'PY'
+          import json, urllib.request
+          days = json.load(urllib.request.urlopen("http://127.0.0.1:8798/api/v1/days"))["days"]
+          t = json.load(urllib.request.urlopen(f"http://127.0.0.1:8798/api/v1/today?day={days[-2]}"))
+          s = json.load(urllib.request.urlopen(f"http://127.0.0.1:8798/api/v1/sessions?day={days[-2]}"))["sessions"]
+          print(len(days), "days;", t["kpis"], ";", len(s), "sessions")
+          assert len(days) >= 5 and s and t["has_observation"]
+          PY
+      - name: Built-in screen capture grabs every monitor
+        continue-on-error: ${{ runner.os == 'macOS' }}   # needs Screen Recording permission
+        working-directory: webapp/backend
+        run: python -c "from app import capture; print(capture.support()); shots = capture._grab(); print([(m, len(j)) for m, j, _ in shots]); assert shots and shots[0][1][:2] == b'\xff\xd8'"
+
   frontend:
     name: frontend build
     runs-on: ubuntu-latest

@@ -2,7 +2,7 @@
 """journal — the ai-work-journal command line (Linux · macOS · Windows).
 
     journal web                 start the dashboard and open it
-    journal demo                try it on a synthetic week (no collectors needed)
+    journal demo                try it on a synthetic two weeks (no collectors needed)
     journal daily [DATE]        daily report  (collect → analyze → LLM → Feishu)
     journal weekly [DATE]       weekly report
     journal collect [DATE]      collect one day's raw data only
