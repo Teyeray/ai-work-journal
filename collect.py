@@ -6,7 +6,7 @@ Reads these local sources:
   - Claude Code session files (~/.claude/projects/**.jsonl)
   - pi session files (~/.pi/agent/sessions/**.jsonl)
   - git commits under configured project roots
-  - ScreenPipe local API (OCR frames)
+  - screen OCR: ScreenPipe local API and/or the web app's built-in sampler
 
 Writes:
   data/<date>.json      structured facts
@@ -28,7 +28,10 @@ from pathlib import Path
 import collect_feishu
 
 BASE = Path(__file__).resolve().parent
-CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+sys.path.insert(0, str(BASE))
+import osutil  # noqa: E402
+
+CFG = osutil.load_config()
 DATA = BASE / "data"
 DATA.mkdir(exist_ok=True)
 
@@ -460,7 +463,7 @@ def collect_git(start, end):
                     ["git", "-C", str(repo), "log", "--all", "--since", since,
                      "--until", until, "--pretty=format:%h|%ad|%s",
                      "--date=format:%H:%M"],
-                    capture_output=True, text=True, timeout=15)
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
             except subprocess.TimeoutExpired:
                 continue
             commits = []
@@ -480,7 +483,7 @@ def collect_git(start, end):
 def gh_run(args, timeout=30):
     gh = CFG.get("gh_bin", "gh")
     try:
-        r = subprocess.run([gh, *args], capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run([gh, *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return None
     return r if r.returncode == 0 else None
@@ -552,8 +555,34 @@ def sp_hhmm(ts):
     return f"{t.astimezone(LOCAL_TZ):%H:%M}" if t else ""
 
 
+def _builtin_captures(start, end):
+    """(timestamp, device, text) rows from the web app's built-in sampler
+    (webapp/backend/app/capture.py), read straight from its SQLite store."""
+    import sqlite3
+    web = osutil.load_config(BASE / "webapp", "config.json")
+    path = Path(os.environ.get("JOURNAL_WEB_DB") or web.get("db_path") or DATA / "webapp.db")
+    if not path.exists():
+        return []
+    try:
+        con = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=10)
+        rows = con.execute("SELECT captured_at, monitor, text FROM screen_captures WHERE captured_at >= ? "
+                           "AND captured_at < ? AND text IS NOT NULL",
+                           (start.astimezone(dt.timezone.utc).isoformat(),
+                            end.astimezone(dt.timezone.utc).isoformat())).fetchall()
+        con.close()
+    except sqlite3.Error:
+        return []
+    return [(ts, f"monitor {m}", t) for ts, m, t in rows]
+
+
 def collect_screenpipe(start, end):
     out = {"frames": 0, "total": 0, "unique": 0, "span": "", "devices": {}, "samples": []}
+    builtin = _builtin_captures(start, end)
+    if not CFG.get("sp_url"):
+        if not builtin:
+            return {"error": "screen OCR off (no sp_url, no built-in captures)", **out}
+        return _summarize_screen(out, [{"content": {"timestamp": ts, "device_name": dev, "text": t}}
+                                       for ts, dev, t in builtin], len(builtin))
     tok_file = CFG.get("sp_token_file")
     headers = {}
     try:
@@ -587,6 +616,11 @@ def collect_screenpipe(start, end):
         total = (d.get("pagination") or {}).get("total") or 0
         if not page or (total and offset >= total):
             break
+    items += [{"content": {"timestamp": ts, "device_name": dev, "text": t}} for ts, dev, t in builtin]
+    return _summarize_screen(out, items, total + len(builtin))
+
+
+def _summarize_screen(out, items, total):
     out["frames"] = len(items)
     out["total"] = total
     texts = []
@@ -626,8 +660,7 @@ def agent_summary(sessions):
     by_proj = {}
     for s in sessions:
         proj = s.get("cwd") or "(unknown)"
-        if proj.startswith("/home/yangrm"):
-            proj = "~" + proj[len("/home/yangrm"):]
+        proj = osutil.short_home(proj)
         p = by_proj.setdefault(proj, {"projects": proj, "sessions": []})
         p["sessions"].append(s)
     return by_proj
@@ -671,7 +704,7 @@ def write_digest(d, data):
     lines.append("## 3. Git 提交")
     if data["git"]:
         for r in data["git"]:
-            repo = r["repo"].replace("/home/yangrm", "~")
+            repo = osutil.short_home(r["repo"])
             lines.append(f"### {repo} ({len(r['commits'])} commits)")
             for c in r["commits"]:
                 lines.append(f"- {c['time']} {c['hash']} {c['subject']}")

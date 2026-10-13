@@ -35,7 +35,7 @@ def scan() -> dict:
             try:
                 r = subprocess.run(["git", "-C", str(repo), "log", f"--since={SINCE}",
                                     "--pretty=%H%x1f%aI%x1f%s%x1f%an"],
-                                   capture_output=True, text=True, timeout=30)
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
                 if r.returncode != 0:
                     continue
             except Exception:
@@ -80,7 +80,7 @@ def my_authors(paths) -> set:
 
     def get(args):
         try:
-            r = subprocess.run(["git", *args, "config", "user.name"], capture_output=True, text=True, timeout=5)
+            r = subprocess.run(["git", *args, "config", "user.name"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
             return r.stdout.strip()
         except Exception:
             return ""

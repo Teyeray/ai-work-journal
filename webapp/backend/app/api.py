@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import analytics, chat, config, reports, db, ingest, llm_classify, timeline, projects, reviews
+from . import analytics, capture, chat, config, ocr, reports, db, ingest, llm_classify, timeline, projects, reviews
 from .adapters import sessions as sessions_mod
 from .timeutil import day_bounds, local_day_key, now_utc, parse_ts, tz
 
@@ -66,6 +66,7 @@ def _llm_on_startup():
     llm_classify.start_background(on_done=_relabel_done)
     # keep the dashboard (and 问 AI) current without pressing 同步数据
     threading.Thread(target=_autosync_loop, name="autosync", daemon=True).start()
+    capture.start()   # built-in screen sampler, if enabled in webapp/config.json
 
 
 # ---------------- health / sync ----------------
@@ -854,8 +855,10 @@ def chat_ask(body: ChatIn):
 
 @app.get("/api/v1/screen/status")
 def screen_status(day: str = None):
-    """Is screen capture (screenpipe) alive? Plus that day's frame count."""
+    """Is screen capture (screenpipe or the built-in sampler) alive? Plus that
+    day's frame count and the OCR engine in use."""
     st = dict(chat.screen_status())
+    st.setdefault("ocr", ocr.describe())
     if day and st["state"] != "off":
         st["day_frames"] = chat.screen_frames(_valid_day(day)) if st["state"] != "down" else 0
     return st
@@ -868,6 +871,24 @@ def screen_restart():
     if not r["ok"]:
         raise HTTPException(409, r["error"])
     return r
+
+
+@app.get("/api/v1/screen/capture/{cid}")
+def screen_capture_image(cid: int):
+    """A screenshot taken by the built-in sampler."""
+    path = capture.image_file(cid)
+    if not path:
+        raise HTTPException(404, "no such capture")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
+@app.post("/api/v1/screen/capture")
+def screen_capture_now():
+    """Take one round of screenshots now (built-in sampler)."""
+    ok, why = capture.support()
+    if not ok:
+        raise HTTPException(409, why)
+    return capture.capture_once()
 
 
 @app.get("/api/v1/screen/frame")

@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import config, db, projects, reports, sessions_view
+from . import capture, config, db, ocr, projects, reports, sessions_view
 from .timeline import _is_prompt
 from .timeutil import now_iso, parse_ts, tz
 
@@ -31,7 +31,7 @@ MAX_ROUNDS = 10
 RESULT_CHARS = 14000
 KEEP_TURNS = 2
 TIMEOUT = 120
-SP_DATA = Path.home() / ".screenpipe" / "data"
+SP_DATA = config.SP_DATA_DIR
 
 
 def available() -> bool:
@@ -280,6 +280,8 @@ def list_commits(start=None, end=None, project=None, query=None, limit=60):
 
 
 def _sp_get(params: dict) -> dict:
+    if not config.SP_URL:
+        raise RuntimeError("screenpipe 未配置(config.json sp_url)")
     token = Path(config.SP_TOKEN_FILE).read_text(encoding="utf-8").strip() if config.SP_TOKEN_FILE else ""
     url = f"{config.SP_URL}/search?" + urllib.parse.urlencode({"content_type": "ocr", **params})
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"} if token else {})
@@ -307,7 +309,7 @@ def _sp_coverage() -> dict:
 
 
 _SP_STATUS = {"at": 0, "v": None, "restarted_at": 0}
-SP_LOG_DIR = Path.home() / ".screenpipe"
+SP_LOG_DIR = config.SP_DATA_DIR.parent
 
 
 def _sp_health() -> dict:
@@ -333,7 +335,10 @@ def _sp_log_cause() -> str:
 
 
 def screen_status() -> dict:
-    """Is screenpipe still capturing? ok | stalled | down | off, plus a fix hint."""
+    """Is screen capture still working? ok | stalled | down | off, plus a fix
+    hint. The built-in sampler when it is enabled, else screenpipe."""
+    if config.CAPTURE.get("enabled"):
+        return capture.status()
     if not config.SP_URL:
         return {"state": "off"}
     # short cache while broken, so an approval shows up quickly
@@ -380,26 +385,31 @@ def screen_status() -> dict:
 
 
 def restart_screen() -> dict:
-    """systemctl --user restart <screenpipe unit>: brings the screen-share dialog back."""
-    import subprocess
+    """Restart the screenpipe service (systemd / launchd / Task Scheduler):
+    on Wayland that brings the screen-share dialog back."""
     if not config.SP_SERVICE:
         return {"ok": False, "error": "没有配置 screenpipe 服务(config.json sp_service)"}
     if time.time() - _SP_STATUS["restarted_at"] < 15:
         return {"ok": False, "error": "刚刚重启过,稍等几秒"}
-    r = subprocess.run(["systemctl", "--user", "restart", config.SP_SERVICE],
-                       capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
-        return {"ok": False, "error": (r.stderr or r.stdout or "systemctl 失败").strip()[:300]}
+    ok, err = config.osutil.restart_service(config.SP_SERVICE)
+    if not ok:
+        return {"ok": False, "error": err or "重启失败"}
     _SP_STATUS.update(at=0, v=None, restarted_at=time.time())
     return {"ok": True}
 
 
 def screen_frames(day: str) -> int:
+    n = capture.count(_iso_utc(day), _iso_utc(day, True))
     try:
         d = _sp_get({"limit": 1, "start_time": _utc(day), "end_time": _utc(day, end=True)})
-        return (d.get("pagination") or {}).get("total") or 0
+        return n + ((d.get("pagination") or {}).get("total") or 0)
     except Exception:  # noqa: BLE001
-        return 0
+        return n
+
+
+def _iso_utc(day: str, end=False) -> str:
+    from .timeutil import day_bounds, iso
+    return iso(day_bounds(day)[1 if end else 0])
 
 
 def _utc(day: str, end=False) -> str:
@@ -420,7 +430,7 @@ def frame_url(c: dict):
             rel = Path(p).resolve().relative_to(base)
         except (ValueError, OSError):
             continue
-        q = {"f": str(rel)}
+        q = {"f": rel.as_posix()}
         if Path(p).suffix.lower() == ".mp4":
             if idx in (None, "", "None"):
                 continue
@@ -429,7 +439,7 @@ def frame_url(c: dict):
     return None
 
 
-FRAME_CACHE = Path.home() / ".cache" / "ai-work-journal" / "frames"
+FRAME_CACHE = config.CACHE_DIR / "frames"
 
 
 def frame_file(f: str, i: int = None):
@@ -460,32 +470,92 @@ def frame_file(f: str, i: int = None):
     return out
 
 
+def _reocr(frames: list[dict], query=None):
+    """Replace screenpipe's on-device OCR text with the API engine's reading
+    (much better for Chinese), cached per frame. At most 6 frames per call."""
+    from concurrent.futures import ThreadPoolExecutor
+    todo = [f for f in frames if f.get("_file")][:6]
+
+    def one(f):
+        key = f["_file"]
+        hit = db.q1("SELECT text FROM ocr_cache WHERE key = ?", (key,))
+        if hit:
+            return f, hit["text"]
+        path = frame_file(*f["_frame"])
+        if not path:
+            return f, None
+        try:
+            r = ocr.recognize(path.read_bytes(), "image/png" if path.suffix == ".png" else "image/jpeg")
+        except ocr.OcrError:
+            return f, None
+        db.ex("INSERT OR REPLACE INTO ocr_cache (key, engine, text, created_at) VALUES (?,?,?,?)",
+              (key, r["engine"], r["text"], now_iso()))
+        return f, r["text"]
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for f, text in ex.map(one, todo):
+            if text is not None:
+                f["text"] = _snip(text, query, 360)
+                f["ocr"] = ocr.engine()
+
+
 def screen_text(query=None, start=None, end=None, limit=8, offset=0):
-    """ScreenPipe OCR frames, newest first."""
+    """Screen OCR frames, newest first: screenpipe and/or the built-in sampler."""
     limit = max(1, min(int(limit or 8), 20))
-    p = {"limit": limit, "offset": max(0, int(offset or 0))}
-    if query:
-        p["q"] = query
-    if start:
-        p["start_time"] = _utc(_day(start, "start"))
-    if end:
-        p["end_time"] = _utc(_day(end, "end"), end=True)
-    try:
-        d = _sp_get(p)
-        cover = _sp_coverage()
-    except Exception as e:
-        return {"summary": "屏幕 OCR 不可用", "error": f"screenpipe: {e}"}
-    total = (d.get("pagination") or {}).get("total") or 0
-    frames = []
-    for it in d.get("data") or []:
-        c = it.get("content") or {}
-        frames.append({"time": _clock(c.get("timestamp"), "%m-%d %H:%M:%S"),
-                       "window": " · ".join(x for x in (c.get("app_name"), c.get("window_name")) if x) or None,
-                       "text": _snip(c.get("text"), query, 360),
-                       "image": frame_url(c)})
-    nxt = p["offset"] + len(frames)
+    offset = max(0, int(offset or 0))
+    s_day = _day(start, "start") if start else None
+    e_day = _day(end, "end") if end else None
+    frames, total, cover, errors = [], 0, {}, []
+    if config.SP_URL:
+        p = {"limit": offset + limit, "offset": 0}
+        if query:
+            p["q"] = query
+        if s_day:
+            p["start_time"] = _utc(s_day)
+        if e_day:
+            p["end_time"] = _utc(e_day, end=True)
+        try:
+            d = _sp_get(p)
+            cover["screenpipe"] = _sp_coverage()
+            total += (d.get("pagination") or {}).get("total") or 0
+            for it in d.get("data") or []:
+                c = it.get("content") or {}
+                f = {"time": _clock(c.get("timestamp"), "%m-%d %H:%M:%S"), "_t": c.get("timestamp") or "",
+                     "window": " · ".join(x for x in (c.get("app_name"), c.get("window_name")) if x) or None,
+                     "text": _snip(c.get("text"), query, 360), "image": frame_url(c), "source": "screenpipe"}
+                if f["image"]:
+                    q = urllib.parse.parse_qs(urllib.parse.urlparse(f["image"]).query)
+                    f["_frame"] = (q["f"][0], int(q["i"][0]) if "i" in q else None)
+                    f["_file"] = f"sp:{f['_frame'][0]}:{f['_frame'][1]}"
+                frames.append(f)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"screenpipe: {e}")
+    n, rows = capture.search(query, _iso_utc(s_day) if s_day else None, _iso_utc(e_day, True) if e_day else None,
+                             offset + limit, 0)
+    if n:
+        total += n
+        cover["builtin"] = capture.coverage()
+        for r in rows:
+            frames.append({"time": _clock(r["captured_at"], "%m-%d %H:%M:%S"), "_t": r["captured_at"],
+                           "window": " · ".join(x for x in (r["app"], r["window"]) if x) or None,
+                           "text": _snip(r["text"] or "", query, 360) or ("(OCR 失败)" if r["error"] else ""),
+                           "image": capture.frame_url(r["id"]), "source": "builtin"})
+    if not frames and errors and not config.CAPTURE.get("enabled"):
+        return {"summary": "屏幕 OCR 不可用", "error": "; ".join(errors)}
+    frames.sort(key=lambda f: parse_ts(f["_t"]) or dt.datetime.min.replace(tzinfo=dt.timezone.utc), reverse=True)
+    frames = frames[offset:offset + limit]
+    if config.OCR.get("reocr_screenpipe") and ocr.is_api():
+        _reocr([f for f in frames if f["source"] == "screenpipe"], query)
+    for f in frames:
+        for k in ("_t", "_frame", "_file"):
+            f.pop(k, None)
+    api = ocr.is_api()
+    note = ("OCR 由视觉模型识别,中英文都可信。" if api and (config.OCR.get("reocr_screenpipe") or not config.SP_URL)
+            else "screenpipe 的 OCR 是英文模型,中文多为乱码;以英文词、文件名、网址为准。")
+    nxt = offset + len(frames)
     return {"summary": f"{total} 帧命中", "total": total, "coverage": cover, "frames": frames,
-            "note": "OCR 是英文模型识别的,中文多为乱码;以英文词、文件名、网址为准。image 是截图地址,可用 ![](image) 嵌入回答",
+            "note": note + "image 是截图地址,可用 ![](image) 嵌入回答",
+            **({"errors": errors} if errors else {}),
             **({"next_offset": nxt} if nxt < total else {})}
 
 
@@ -613,13 +683,14 @@ def search(query, start=None, end=None):
             for x in c.get("excerpts", []):
                 if q.lower() in x.lower():
                     fs.append(f"{d} {c['chat']}: {_snip(x, q, 120)}")
+    ocr_n = capture.search(q, _iso_utc(s), _iso_utc(e, True), 1, 0)[0] or None
     try:
-        ocr = (_sp_get({"q": q, "limit": 1, "start_time": _utc(s), "end_time": _utc(e, True)})
-               .get("pagination") or {}).get("total")
-    except Exception:
-        ocr = None
+        ocr_n = (ocr_n or 0) + ((_sp_get({"q": q, "limit": 1, "start_time": _utc(s), "end_time": _utc(e, True)})
+                                 .get("pagination") or {}).get("total") or 0)
+    except Exception:  # noqa: BLE001
+        pass
     hits = {"windows": len(win_rows), "sessions": len(sess), "commits": len(commits),
-            "reports": len(rep), "feishu": len(fs), "screen_ocr": ocr}
+            "reports": len(rep), "feishu": len(fs), "screen_ocr": ocr_n}
     return {
         "summary": " · ".join(f"{k} {v}" for k, v in hits.items() if v),
         "range": f"{s}~{e}", "hits": hits,
@@ -657,7 +728,7 @@ TOOLS = [
     _fn("read_session", "读某个会话原文。mode=prompts 只看你的指令(默认,省篇幅);mode=full 含 agent 回复和工具调用。分页用 offset。",
         {"id": _I, "mode": {"type": "string", "enum": ["prompts", "full"]}, "offset": _I, "limit": _I}, ["id"]),
     _fn("list_commits", "你的 git 提交(只含你本人的),可按日期、项目、关键词过滤。", {"start": _D, "end": _D, "project": _S, "query": _S, "limit": _I}),
-    _fn("screen_text", "屏幕截图 OCR(screenpipe),按关键词和日期查,返回时间、识别文字片段和截图地址。分页用 offset。",
+    _fn("screen_text", "屏幕截图 OCR(screenpipe 和/或内置截屏),按关键词和日期查,返回时间、识别文字片段和截图地址。分页用 offset。",
         {"query": _S, "start": _D, "end": _D, "limit": _I, "offset": _I}),
     _fn("feishu", "某天飞书聊天摘录和收到的文件。", {"day": _D}, ["day"]),
     _fn("list_reports", "已生成的日报/周报列表(含飞书链接)。", {"kind": {"type": "string", "enum": ["daily", "weekly"]}}),
@@ -720,7 +791,7 @@ SYSTEM = """你是用户个人工作看板里的助手,回答关于 TA 自己工
 - 窗口记录(ActivityWatch):每个前台窗口的应用、标题、时长,已按项目归类。
 - agent 会话(claude code / pi):用户的每条指令、agent 的回复和工具调用。
 - git 提交(只含用户本人的)、项目设定(优先级、目标)。
-- 屏幕截图 OCR(screenpipe),覆盖时段有限,英文 OCR,中文多为乱码。
+- 屏幕截图 OCR(screenpipe 和/或内置截屏),覆盖时段有限;结果里的 note 说明文字可信度。
 - 每天的飞书聊天摘录;已生成的日报/周报。
 
 ## 怎么查(渐进式)

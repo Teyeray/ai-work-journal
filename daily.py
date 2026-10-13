@@ -18,7 +18,9 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 from collect import DATA, parse_date  # noqa: E402
 
-CFG = __import__("json").loads((BASE / "config.json").read_text(encoding="utf-8"))
+import osutil  # noqa: E402
+
+CFG = osutil.load_config()
 REPORTS = BASE / "reports"
 REPORTS.mkdir(exist_ok=True)
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo
@@ -31,18 +33,17 @@ PROMPT = (BASE / "templates" / "daily.md").read_text(encoding="utf-8")
 def run_pi(prompt, attachment, timeout=900):
     cmd = [CFG["pi_bin"], "-p", "--no-tools", "--no-session",
            "--mode", "text", f"@{attachment}", prompt]
-    env = {"PATH": f"{Path.home() / '.local/bin'}:/usr/local/bin:/usr/bin:/bin",
-           "HOME": str(Path.home()), "LANG": "C.UTF-8", "TERM": "dumb"}
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(BASE))
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+                       env=osutil.tool_env(), cwd=str(BASE))
     if r.returncode != 0:
         raise RuntimeError(f"pi exited {r.returncode}: {r.stderr[-500:]}")
     return r.stdout.strip()
 
 
 # --- schedule (set from the web dashboard's 日报 page) ---------------------
-# Honoured only when systemd's timer starts us (INVOCATION_ID set, no args);
+# Honoured only when the scheduler starts us (--scheduled, see osutil.JOBS);
 # a manual `journal daily` always runs.
-SCHEDULE_FILE = Path.home() / ".config" / "ai-work-journal" / "schedule.json"
+SCHEDULE_FILE = osutil.config_dir() / "schedule.json"
 
 
 def load_schedule() -> dict:
@@ -55,19 +56,19 @@ def load_schedule() -> dict:
 
 
 def started_by_timer() -> bool:
-    import os as _os
-    return bool(_os.environ.get("INVOCATION_ID")) and len(sys.argv) == 1
+    return osutil.started_by_scheduler()
 
 
 def main():
-    d = parse_date(sys.argv[1] if len(sys.argv) > 1 else None)
+    args = osutil.script_args()
+    d = parse_date(args[0] if args else None)
     if started_by_timer() and d.isoweekday() not in load_schedule()["daily_weekdays"]:
         print(f"skipped by schedule: {d} is weekday {d.isoweekday()}")
         return
     digest = DATA / f"{d.isoformat()}.digest.md"
     # always re-collect: manual runs earlier in the day must not pin stale data
     r = subprocess.run([sys.executable, str(BASE / "collect.py"), d.isoformat()],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     print(r.stdout.strip() or r.stderr.strip())
     if not digest.exists():
         print(f"no digest for {d}, abort")
@@ -75,7 +76,7 @@ def main():
     # best-effort LLM analysis of the day's conversations (dashboard section)
     try:
         an = subprocess.run([sys.executable, str(BASE / "analyze.py"), d.isoformat()],
-                            capture_output=True, text=True, timeout=1200)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1200)
         if an.stdout.strip():
             print(an.stdout.strip())
     except Exception as e:
@@ -94,7 +95,7 @@ def main():
     # best-effort feishu push
     if load_schedule()["feishu_push"]:
         fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(report_path)],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if fe.stdout.strip():
             print(fe.stdout.strip())
     else:
@@ -102,7 +103,7 @@ def main():
     # best-effort dashboard refresh so the day lands in the charts
     try:
         db = subprocess.run([sys.executable, str(BASE / "dashboard.py")],
-                            capture_output=True, text=True, timeout=120)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         if db.stdout.strip():
             print(db.stdout.strip())
     except Exception:

@@ -6,3 +6,7 @@ data/webapp.db*
 data/
 reports/
 .omc/
+config.local.json
+webapp/config.local.json
+# verify-script screenshots of real data
+webapp/screenshots/

@@ -9,7 +9,10 @@ import sys
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
-CFG = __import__("json").loads((BASE / "config.json").read_text(encoding="utf-8"))
+sys.path.insert(0, str(BASE))
+import osutil  # noqa: E402
+
+CFG = osutil.load_config()
 REPORTS = BASE / "reports"
 WEEKLY = REPORTS / "weekly"
 WEEKLY.mkdir(parents=True, exist_ok=True)
@@ -20,9 +23,9 @@ PROMPT = (BASE / "templates" / "weekly.md").read_text(encoding="utf-8")
 
 
 # --- schedule (set from the web dashboard's 日报 page) ---------------------
-# Honoured only when systemd's timer starts us (INVOCATION_ID set, no args);
+# Honoured only when the scheduler starts us (--scheduled, see osutil.JOBS);
 # a manual `journal weekly` always runs.
-SCHEDULE_FILE = Path.home() / ".config" / "ai-work-journal" / "schedule.json"
+SCHEDULE_FILE = osutil.config_dir() / "schedule.json"
 
 
 def load_schedule() -> dict:
@@ -35,12 +38,12 @@ def load_schedule() -> dict:
 
 
 def started_by_timer() -> bool:
-    import os as _os
-    return bool(_os.environ.get("INVOCATION_ID")) and len(sys.argv) == 1
+    return osutil.started_by_scheduler()
 
 
 def main():
-    ref = dt.date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else dt.date.today()
+    args = osutil.script_args()
+    ref = dt.date.fromisoformat(args[0]) if args else dt.date.today()
     if started_by_timer() and not load_schedule()["weekly_enabled"]:
         print("skipped by schedule: weekly report disabled")
         return
@@ -73,7 +76,7 @@ def main():
     print(f"weekly report written: {out_path}")
     if load_schedule()["feishu_push"]:
         fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(out_path)],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if fe.stdout.strip():
             print(fe.stdout.strip())
     else:

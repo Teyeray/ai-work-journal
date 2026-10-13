@@ -61,6 +61,19 @@ def migrate(conn: sqlite3.Connection) -> None:
                 role TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL)""")
             conn.execute("CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id, id)")
             conn.execute("PRAGMA user_version = 4")
+        if v < 5:
+            # built-in screen sampler (app/capture.py): one row per monitor screenshot
+            conn.execute("""CREATE TABLE IF NOT EXISTS screen_captures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                captured_at TEXT NOT NULL,     -- UTC iso
+                monitor INTEGER NOT NULL, app TEXT, window TEXT,
+                image TEXT,                    -- path relative to config.CAPTURE_DIR
+                text TEXT, engine TEXT, ocr_ms INTEGER, error TEXT)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS screen_captures_at ON screen_captures(captured_at)")
+            # API OCR of screenpipe frames (reocr_screenpipe), keyed by the frame file
+            conn.execute("""CREATE TABLE IF NOT EXISTS ocr_cache (
+                key TEXT PRIMARY KEY, engine TEXT, text TEXT, created_at TEXT NOT NULL)""")
+            conn.execute("PRAGMA user_version = 5")
 
 
 def q(sql, params=()):

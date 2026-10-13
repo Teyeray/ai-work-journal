@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 
 from . import config, db
+from .config import osutil
 from .timeutil import now_utc
 
 ANALYZER_VERSION = "v1"
@@ -152,16 +153,15 @@ def _call_openai(text: str) -> str:
 
 
 def _call_pi(text: str) -> str:
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write(PROMPT + text)
         path = f.name
-    env = {"PATH": f"{Path.home() / '.local/bin'}:/usr/local/bin:/usr/bin:/bin",
-           "HOME": str(Path.home()), "LANG": "C.UTF-8", "TERM": "dumb"}
+    env = osutil.tool_env()
     try:
         r = subprocess.run(
             [str(config.PI_BIN), "-p", "--no-tools", "--no-session", "--mode", "text",
              "评审文件中的会话,严格按给定 schema 输出一个 JSON 对象,不要其他内容。", "@" + path],
-            capture_output=True, text=True, timeout=TIMEOUT, env=env, cwd="/tmp",
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT, env=env, cwd=tempfile.gettempdir(),
             stdin=subprocess.DEVNULL)
         if r.returncode != 0:
             raise RuntimeError(f"pi exited {r.returncode}: {r.stderr[-300:]}")

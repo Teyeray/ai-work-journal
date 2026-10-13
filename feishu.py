@@ -11,7 +11,10 @@ import sys
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
-CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+sys.path.insert(0, str(BASE))
+import osutil  # noqa: E402
+
+CFG = osutil.load_config()
 LARK = CFG["lark_bin"]
 MAP = BASE / "data" / "feishu-map.json"
 
@@ -19,7 +22,7 @@ MAP = BASE / "data" / "feishu-map.json"
 def auth_ok():
     try:
         r = subprocess.run([LARK, "auth", "status"], capture_output=True,
-                           text=True, timeout=20)
+                           text=True, encoding="utf-8", errors="replace", timeout=20)
         d = json.loads(r.stdout)
     except Exception:
         return False
@@ -45,15 +48,15 @@ def main():
         sys.exit(0)
     name = f"AI 工作日志 {f.stem}"
     # replace semantics: delete the previous doc for the same report file
-    maps = json.loads(MAP.read_text()) if MAP.exists() else {}
+    maps = json.loads(MAP.read_text(encoding="utf-8")) if MAP.exists() else {}
     old = (maps.get(f.name) or {}).get("token")
     if old:
         subprocess.run([LARK, "drive", "+delete", "--file-token", old,
                         "--type", "docx", "--yes"],
-                       capture_output=True, text=True, timeout=60)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     r = subprocess.run([LARK, "drive", "+import", "--file", str(f),
                         "--type", "docx", "--name", name],
-                       capture_output=True, text=True, timeout=120)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     try:
         d = json.loads(r.stdout)
     except json.JSONDecodeError:

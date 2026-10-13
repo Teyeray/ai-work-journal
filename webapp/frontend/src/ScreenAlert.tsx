@@ -52,12 +52,15 @@ export function ScreenAlert() {
       {open && (
         <div className="screen-alert-pop" role="dialog" aria-label="截屏状态">
           <div className="text-[13px] font-semibold text-neutral-900">
-            {st.awaiting_approval ? "截屏已重启,等你授权" : "屏幕截图(screenpipe)没有在记录"}
+            {st.awaiting_approval ? "截屏已重启,等你授权" : `屏幕截图(${st.source === "builtin" ? "内置截屏" : "screenpipe"})没有在记录`}
           </div>
           {st.last_frame && (
             <div className="mt-1 text-neutral-500">最后一帧 {st.last_frame.slice(0, 16).replace("T", " ")}</div>
           )}
           {!!st.monitors?.length && <div className="text-neutral-500">识别到 {st.monitors.length} 个显示器:{st.monitors.join("、")}</div>}
+          {st.ocr && st.ocr.engine !== "screenpipe" && (
+            <div className="text-neutral-500">OCR:{st.ocr.engine}{st.ocr.model ? ` · ${st.ocr.model}` : ""}{st.ocr.problem ? `(${st.ocr.problem})` : ""}</div>
+          )}
           {st.reason && <div className="mt-2 text-neutral-700"><b className="font-medium">原因:</b>{st.reason}</div>}
           {st.hint && <div className="mt-1 text-neutral-700"><b className="font-medium">处理:</b>{st.hint}</div>}
           {err && <div className="mt-2 text-red-600">{err}</div>}

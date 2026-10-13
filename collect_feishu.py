@@ -8,6 +8,7 @@ Called from collect.py: collect(start, end) -> dict
 """
 import datetime as dt
 import json
+import sys
 import re
 import shutil
 import subprocess
@@ -15,7 +16,10 @@ import zipfile
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
-CFG = json.loads((BASE / "config.json").read_text(encoding="utf-8"))
+sys.path.insert(0, str(BASE))
+import osutil  # noqa: E402
+
+CFG = osutil.load_config()
 DATA = BASE / "data"
 LARK = CFG["lark_bin"]
 
@@ -25,7 +29,7 @@ TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".py", ".log", ".ts", ".js",
 
 def run_lark(args, timeout=90):
     """Run one lark-cli command, return parsed JSON or None."""
-    r = subprocess.run([LARK] + args, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run([LARK] + args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     try:
         return json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):
@@ -86,7 +90,7 @@ def read_preview(path):
     if ext == ".pdf":
         if shutil.which("pdftotext"):
             r = subprocess.run(["pdftotext", "-l", "3", str(path), "-"],
-                               capture_output=True, text=True, timeout=60)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
             text = re.sub(r"\s+", " ", (r.stdout or "").strip())
             return text[:1200] or "(PDF 无可提取文本)"
         return "(PDF,未装 pdftotext)"

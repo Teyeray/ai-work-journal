@@ -8,7 +8,8 @@ import { useSse } from "./sse";
  *   left   when they are generated (weekday switches, weekly, Feishu push),
  *          timer status and a manual "generate now"; then the report list
  *   right  the selected report rendered, with its Feishu document link
- * The schedule is read by daily.py / weekly.py when systemd's timer fires.
+ * The schedule is read by daily.py / weekly.py when the OS scheduler fires
+ * (systemd timer · launchd agent · Windows Task Scheduler).
  */
 
 interface ReportMeta {
@@ -17,7 +18,7 @@ interface ReportMeta {
 }
 interface Schedule { daily_weekdays: number[]; weekly_enabled: boolean; feishu_push: boolean }
 interface TimerInfo {
-  timer_active: boolean; calendar: string | null; next_run: string | null; last_trigger: string | null;
+  installed?: boolean; backend?: string; timer_active: boolean; calendar: string | null; next_run: string | null; last_trigger: string | null;
   last_result: string | null; last_exit: string | null; running: boolean;
   manual: { started_at: string; running: boolean; exit_code: number | null; log_tail: string } | null;
 }
@@ -198,7 +199,7 @@ function ScheduleCard({ data, onChange }: { data: ListResp; onChange: () => void
   );
 }
 
-/** systemd OnCalendar ("*-*-* 23:00:00", "Fri *-*-* 23:30:00") → "每天 23:00" / "每周五 23:30". */
+/** "*-*-* 23:00:00" / "Fri *-*-* 23:30:00" (systemd) or "daily 23:00" / "Fri 23:30" → "每天 23:00" / "每周五 23:30". */
 function calText(cal: string | null | undefined): string | null {
   if (!cal) return null;
   const tm = cal.match(/(\d{2}:\d{2})/)?.[1];
@@ -210,7 +211,9 @@ function calText(cal: string | null | undefined): string | null {
 
 function TimerLine({ t, skip }: { t: TimerInfo | undefined; skip: boolean }) {
   if (!t) return null;
-  if (!t.timer_active) return <div className="mt-1.5 text-[11.5px] text-amber-700">systemd 定时器未启用</div>;
+  const name = { systemd: "systemd 定时器", launchd: "launchd 任务", schtasks: "Windows 计划任务" }[t.backend ?? "systemd"] ?? "定时任务";
+  if (t.installed === false) return <div className="mt-1.5 text-[11.5px] text-amber-700">{name}未安装 · 运行 <code>journal schedule install</code></div>;
+  if (!t.timer_active) return <div className="mt-1.5 text-[11.5px] text-amber-700">{name}未启用</div>;
   const ok = t.last_result === "success";
   return (
     <div className="mt-1.5 flex flex-wrap gap-x-3 text-[11.5px] text-neutral-400">

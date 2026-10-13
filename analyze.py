@@ -18,6 +18,7 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 from collect import DATA, parse_date, CFG  # noqa: E402
+import osutil  # noqa: E402
 
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo
 
@@ -25,9 +26,8 @@ LOCAL_TZ = dt.datetime.now().astimezone().tzinfo
 def run_pi(prompt, attachment, timeout=900):
     cmd = [CFG["pi_bin"], "-p", "--no-tools", "--no-session",
            "--mode", "text", f"@{attachment}", prompt]
-    env = {"PATH": f"{Path.home() / '.local/bin'}:/usr/local/bin:/usr/bin:/bin",
-           "HOME": str(Path.home()), "LANG": "C.UTF-8", "TERM": "dumb"}
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, cwd=str(BASE))
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+                       env=osutil.tool_env(), cwd=str(BASE))
     if r.returncode != 0:
         raise RuntimeError(f"pi exited {r.returncode}: {r.stderr[-500:]}")
     return r.stdout.strip()

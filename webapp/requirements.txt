@@ -1,0 +1,9 @@
+# web dashboard backend
+fastapi>=0.110
+uvicorn>=0.29
+# tests
+pytest>=8
+httpx>=0.27
+# optional on Windows: IANA time zones and local zone detection
+tzdata ; sys_platform == "win32"
+tzlocal ; sys_platform == "win32"

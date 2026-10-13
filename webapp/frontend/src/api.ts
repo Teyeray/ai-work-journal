@@ -173,6 +173,8 @@ export interface SessionRow {
 
 export interface ScreenStatus {
   state: "ok" | "stalled" | "down" | "off";
+  source?: "builtin";                     // absent = screenpipe
+  ocr?: { engine: string; model?: string; url?: string; configured: boolean; problem?: string | null };
   last_frame?: string | null;
   monitors?: string[];
   reason?: string;
@@ -373,8 +375,8 @@ export const api = {
 
 export function fmtDur(sec: number): string {
   if (sec <= 0) return "0m";
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
+  const total = Math.round(sec / 60);       // round once, or 7199 s reads "1h60m"
+  const h = Math.floor(total / 60), m = total % 60;
   return h ? `${h}h${m ? m + "m" : ""}` : `${m}m`;
 }
 

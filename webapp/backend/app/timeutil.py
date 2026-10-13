@@ -3,12 +3,7 @@ import datetime as dt
 
 from . import config
 
-_TZ = dt.timezone(dt.timedelta(hours=8))
-try:
-    from zoneinfo import ZoneInfo
-    _TZ = ZoneInfo(config.TIMEZONE)
-except Exception:
-    pass
+_TZ = config.osutil.local_zone(config.TIMEZONE)
 
 
 def tz():

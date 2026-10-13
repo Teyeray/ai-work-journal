@@ -1,51 +1,47 @@
 {
+  "host": "127.0.0.1",
+  "port": 8799,
+  "timezone": "",
   "llm": {
     "enabled": false
   },
-  "host": "127.0.0.1",
-  "port": 8799,
-  "classification": {
-    "seed_projects": {
-      "RSI": {
-        "aliases": [
-          "rsi",
-          "memoharness",
-          "memo harness",
-          "darwin godel",
-          "self-improving",
-          "harness"
-        ]
-      },
-      "CASMI": {
-        "aliases": [
-          "casmi",
-          "enveda",
-          "mass spectra"
-        ]
-      },
-      "ai-work-journal": {
-        "aliases": [
-          "ai-work-journal",
-          "工作日志",
-          "工作看板"
-        ]
-      },
-      "paperfacts-dev": {
-        "parent": "paperfacts"
-      },
-      "paperfacts-fig": {
-        "parent": "paperfacts"
-      },
-      "agent_sources": {
-        "ignore": true
-      }
-    }
-  },
   "llm_classify": {
-    "enabled": true,
+    "enabled": false,
     "model": "qwen3.8-max",
-    "env_file": "~/.config/ai-work-journal/.env",
     "min_confidence": 0.7,
     "days": 30
+  },
+  "classification": {
+    "seed_projects": {}
+  },
+  "privacy": {
+    "sensitive_apps": [
+      "1password",
+      "bitwarden",
+      "keepassxc",
+      "keychain access"
+    ]
+  },
+  "ocr": {
+    "engine": "screenpipe",
+    "reocr_screenpipe": false,
+    "openai": {
+      "base_url": "",
+      "model": "qwen3.5-ocr",
+      "api_key_env": "OCR_API_KEY",
+      "base_url_env": "OCR_BASE_URL"
+    },
+    "http": {
+      "url": "",
+      "mode": "json",
+      "text_path": "text"
+    }
+  },
+  "capture": {
+    "enabled": false,
+    "interval_sec": 60,
+    "keep_days": 14,
+    "max_width": 1600,
+    "skip_unchanged": true
   }
 }

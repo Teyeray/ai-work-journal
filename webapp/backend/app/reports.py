@@ -4,15 +4,15 @@ Reports are written by the journal pipeline (daily.py → reports/<date>.md,
 weekly.py → reports/weekly/<year>-W<ww>.md) and pushed to Feishu by feishu.py,
 which records each document's URL in data/feishu-map.json.
 
-The schedule lives outside the repo (~/.config/ai-work-journal/schedule.json)
-and is honoured by daily.py / weekly.py when systemd's timer starts them;
-running them by hand ignores it.
+The schedule lives outside the repo (<config dir>/schedule.json) and is
+honoured by daily.py / weekly.py when the OS scheduler (systemd timer, launchd
+agent or Task Scheduler task, see osutil.JOBS) starts them; running them by
+hand ignores it.
 """
 import datetime as dt
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -22,11 +22,10 @@ from . import config
 REPORTS = config.REPO_ROOT / "reports"
 WEEKLY = REPORTS / "weekly"
 FEISHU_MAP = config.REPO_ROOT / "data" / "feishu-map.json"
-SCHEDULE = Path(os.environ.get("JOURNAL_SCHEDULE_FILE",
-                               str(Path.home() / ".config" / "ai-work-journal" / "schedule.json")))
-LOG_DIR = Path.home() / ".cache" / "ai-work-journal"
+SCHEDULE = Path(os.environ.get("JOURNAL_SCHEDULE_FILE", str(config.CONFIG_DIR / "schedule.json")))
+LOG_DIR = config.CACHE_DIR
 DEFAULT_SCHEDULE = {"daily_weekdays": [1, 2, 3, 4, 5, 6, 7], "weekly_enabled": True, "feishu_push": True}
-UNITS = {"daily": "ai-journal-daily", "weekly": "ai-journal-weekly"}
+UNITS = {"daily": "ai-journal-daily", "weekly": "ai-journal-weekly"}  # = osutil.JOBS labels
 _NAME = {"daily": re.compile(r"^\d{4}-\d{2}-\d{2}\.md$"), "weekly": re.compile(r"^\d{4}-W\d{2}\.md$")}
 _RUNS = {}
 
@@ -94,38 +93,13 @@ def set_schedule(s: dict) -> dict:
     return s
 
 
-# ---------------- systemd timers + manual runs ----------------
-
-def _show(unit: str, props: str) -> dict:
-    try:
-        r = subprocess.run(["systemctl", "--user", "show", unit, "-p", props],
-                           capture_output=True, text=True, timeout=5)
-    except Exception:
-        return {}
-    return dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
-
-
-def _ts(v: str):
-    """systemd timestamp ('Sun 2026-10-11 23:00:00 CST') → ISO-ish string, or None."""
-    m = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", v or "")
-    return m.group(1) if m else None
-
+# ---------------- OS scheduler + manual runs ----------------
 
 def timer_status() -> dict:
     out = {}
-    for kind, unit in UNITS.items():
-        t = _show(f"{unit}.timer", "NextElapseUSecRealtime,LastTriggerUSec,ActiveState,TimersCalendar")
-        sv = _show(f"{unit}.service", "Result,ExecMainExitTimestamp,ExecMainStatus,ActiveState")
-        cal = re.search(r"OnCalendar=([^;]+)", t.get("TimersCalendar", ""))
-        out[kind] = {
-            "timer_active": t.get("ActiveState") == "active",
-            "calendar": cal.group(1).strip() if cal else None,
-            "next_run": _ts(t.get("NextElapseUSecRealtime")),
-            "last_trigger": _ts(t.get("LastTriggerUSec")),
-            "last_result": sv.get("Result"), "last_exit": _ts(sv.get("ExecMainExitTimestamp")),
-            "running": sv.get("ActiveState") == "activating" or _manual_running(kind),
-            "manual": _manual(kind),
-        }
+    for kind in UNITS:
+        st = config.osutil.schedule_status(kind)
+        out[kind] = {**st, "running": st["running"] or _manual_running(kind), "manual": _manual(kind)}
     return out
 
 
@@ -155,15 +129,14 @@ def run_now(kind: str) -> dict:
     log = LOG_DIR / f"manual-{kind}.log"
     script = config.REPO_ROOT / ("daily.py" if kind == "daily" else "weekly.py")
     env = {k: v for k, v in os.environ.items() if k != "INVOCATION_ID"}
-    with log.open("w") as fh:
+    with log.open("w", encoding="utf-8") as fh:
         proc = subprocess.Popen([sys.executable, str(script)], cwd=str(config.REPO_ROOT),
                                 stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                env=env, start_new_session=True)
+                                env=env, **config.osutil.detach_kwargs())
     _RUNS[kind] = {"proc": proc, "log": str(log), "started_at": dt.datetime.now().isoformat(timespec="seconds")}
     return {"started": True}
 
 
 def stop_all():  # used by tests
     for r in _RUNS.values():
-        if r["proc"].poll() is None:
-            os.killpg(r["proc"].pid, signal.SIGTERM)
+        config.osutil.terminate(r["proc"])

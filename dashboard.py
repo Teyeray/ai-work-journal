@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 
 BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE))
+import osutil  # noqa: E402
 DATA = BASE / "data"
 OUT = BASE / "reports" / "dashboard.html"
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo
@@ -38,7 +40,7 @@ def hm(iso):
 
 
 def shorten_path(p):
-    p = p.replace("/home/yangrm", "~")
+    p = osutil.short_home(p)
     if len(p) > 70:
         p = "~…" + p[-67:]
     return p
@@ -77,7 +79,7 @@ def compact_day(j):
         cs = r.get("commits") or []
         if not cs:
             continue
-        repo = r["repo"].replace("/home/yangrm/", "")
+        repo = osutil.short_home(r["repo"]).removeprefix("~/")
         commits.append({
             "r": repo, "n": len(cs),
             "ts": [c["time"] for c in cs],

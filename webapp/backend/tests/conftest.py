@@ -19,12 +19,16 @@ os.environ["JOURNAL_LLM_DISABLE"] = "1"   # tests never call the network
 os.environ["JOURNAL_AUTOSYNC"] = "0"           # no background sync thread work in tests
 os.environ["JOURNAL_SCHEDULE_FILE"] = str(_SANDBOX / "schedule.json")
 os.environ["TZ"] = "Asia/Singapore"
-time.tzset()
+os.environ["JOURNAL_TZ"] = "Asia/Singapore"
+os.environ["JOURNAL_CONFIG_DIR"] = str(_SANDBOX / "config")
+os.environ["JOURNAL_CACHE_DIR"] = str(_SANDBOX / "cache")
+if hasattr(time, "tzset"):   # POSIX; on Windows JOURNAL_TZ alone sets the zone
+    time.tzset()
 sys.path.insert(0, str(BACKEND))
 
 from app import config, db, timeutil  # noqa: E402
 
-_TABLES = ("source_events", "source_cursors", "agent_sessions", "session_event_links",
+_TABLES = ("screen_captures", "ocr_cache", "source_events", "source_cursors", "agent_sessions", "session_event_links",
            "projects", "manual_overrides", "session_reviews", "review_feedback",
            "analysis_jobs", "daily_projections", "sync_log", "outcomes",
            "planned_blocks", "llm_title_labels", "chat_messages", "chat_threads")
