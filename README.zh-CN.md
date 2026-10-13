@@ -213,7 +213,7 @@ flowchart LR
 ## 🧑‍💻 开发
 
 ```bash
-cd webapp/backend && ../.venv/bin/python -m pytest -q     # 100 个后端测试
+cd webapp/backend && ../.venv/bin/python -m pytest -q     # 101 个后端测试
 cd webapp/frontend && npm run dev                          # Vite 开发服务器
 node webapp/frontend/verify-today.mjs                      # 73 项真实浏览器验收(需服务在跑)
 ```

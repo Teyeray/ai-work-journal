@@ -426,6 +426,13 @@ for (const [day, name] of [["2026-10-05", "heavy"], ["2026-09-30", "no-observati
   await page.goto(BASE + "/?t=sessions", { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".dp-trigger", { timeout: 8000 });
   await sleep(1500);
+  // open the first carried-over session (the newest row may have started today)
+  const opened = await page.evaluate(() => {
+    const r = [...document.querySelectorAll(".card button")].find((b) => b.textContent.includes("自 ") && b.textContent.includes("起"));
+    if (r) r.click();
+    return !!r;
+  });
+  if (opened) await sleep(1200);
   const s = await page.evaluate(() => {
     const rows = [...document.querySelectorAll(".card button")].filter((b) => b.textContent.includes("自 ") && b.textContent.includes("起"));
     const pane = document.querySelectorAll(".card")[1]?.textContent ?? "";

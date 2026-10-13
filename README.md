@@ -325,7 +325,7 @@ journal install             put `journal` on your PATH
 ## 🧑‍💻 Development
 
 ```bash
-cd webapp/backend && ../.venv/bin/python -m pytest -q     # 100 backend tests
+cd webapp/backend && ../.venv/bin/python -m pytest -q     # 101 backend tests
 cd webapp/frontend && npm run dev                          # Vite dev server (proxies the API)
 node webapp/frontend/verify-today.mjs                      # 73 real-browser checks (needs a running server)
 ```
