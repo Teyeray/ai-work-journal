@@ -272,6 +272,9 @@ export interface Review {
 }
 
 async function j<T>(r: Response): Promise<T> {
+  if (r.status === 401) {   // the sign-in expired (remote access, see backend app/auth.py)
+    location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
+  }
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));
     const b = body as { message?: string; detail?: unknown };

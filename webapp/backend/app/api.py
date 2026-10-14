@@ -6,16 +6,63 @@ import threading
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import analytics, capture, chat, config, i18n, ocr, reports, db, ingest, llm_classify, timeline, projects, reviews
+from . import analytics, auth, capture, chat, config, i18n, ocr, reports, db, ingest, llm_classify, timeline, projects, reviews
 from .adapters import sessions as sessions_mod
 from .i18n import label, tr
 from .timeutil import day_bounds, local_day_key, now_utc, parse_ts, tz
 
 app = FastAPI(title="ai-work-journal dashboard", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def _auth(request: Request, call_next):
+    """A password in front of everything once one is set (see app/auth.py);
+    direct requests on this machine stay open."""
+    path = request.url.path
+    if path in ("/login", "/logout") or not auth.enabled() or auth.is_local(request) \
+            or auth.valid(request.cookies.get(auth.COOKIE)):
+        return await call_next(request)
+    if path.startswith("/api/"):
+        return JSONResponse({"error": {"code": "unauthorized", "message": tr("需要登录", "Sign-in required")}},
+                            status_code=401)
+    nxt = path + ("?" + request.url.query if request.url.query else "")
+    return RedirectResponse(auth.login_url(nxt), status_code=302)
+
+
+@app.get("/login")
+def login_page(next: str = "/"):
+    return HTMLResponse(auth.page(auth.safe_next(next)), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/login")
+async def login(request: Request):
+    from urllib.parse import parse_qs
+    form = parse_qs((await request.body()).decode("utf-8", "replace"))
+    nxt = auth.safe_next((form.get("next") or ["/"])[0])
+    who = auth.client_id(request)
+    if auth.throttled(who):
+        return HTMLResponse(auth.page(nxt, tr("尝试次数过多，请 15 分钟后再试", "Too many attempts, try again in 15 minutes")),
+                            status_code=429)
+    if not auth.enabled() or not auth.check_password((form.get("password") or [""])[0], auth._stored()):
+        auth.failed(who)
+        await asyncio.sleep(0.8)
+        return HTMLResponse(auth.page(nxt, tr("密码不对", "Wrong password")), status_code=401)
+    auth.succeeded(who)
+    r = RedirectResponse(nxt, status_code=303)
+    r.set_cookie(auth.COOKIE, auth.issue(), max_age=auth.TTL, httponly=True, samesite="lax",
+                 secure=not auth.is_local(request), path="/")
+    return r
+
+
+@app.get("/logout")
+def logout():
+    r = RedirectResponse("/login", status_code=303)
+    r.delete_cookie(auth.COOKIE, path="/")
+    return r
 
 
 @app.middleware("http")
