@@ -18,6 +18,8 @@ from . import config, db
 from .config import osutil
 from .timeutil import now_utc
 
+import llm_cli  # noqa: E402  (REPO_ROOT is already on sys.path via app.config)
+
 ANALYZER_VERSION = "v1"
 TIMEOUT = 900
 
@@ -153,19 +155,15 @@ def _call_openai(text: str) -> str:
 
 
 def _call_pi(text: str) -> str:
+    """Reviews use the shared report-LLM backend (pi by default, opencode when
+    configured), through the same per-run tool-less agent as the reports."""
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
         f.write(PROMPT + text)
         path = f.name
-    env = osutil.tool_env()
     try:
-        r = subprocess.run(
-            [str(config.PI_BIN), "-p", "--no-tools", "--no-session", "--mode", "text",
-             "评审文件中的会话,严格按给定 schema 输出一个 JSON 对象,不要其他内容。", "@" + path],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT, env=env, cwd=tempfile.gettempdir(),
-            stdin=subprocess.DEVNULL)
-        if r.returncode != 0:
-            raise RuntimeError(f"pi exited {r.returncode}: {r.stderr[-300:]}")
-        return r.stdout
+        return llm_cli.generate(
+            "评审文件中的会话,严格按给定 schema 输出一个 JSON 对象,不要其他内容。",
+            attachment=path, timeout=TIMEOUT)
     finally:
         os.unlink(path)
 

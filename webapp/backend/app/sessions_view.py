@@ -56,11 +56,18 @@ def summarize(r) -> dict:
     sub = "/subagents/" in (r["external_id"] or "").replace("\\", "/")
     title, first_any, prompts, tools, tokens, models = None, None, 0, 0, 0, set()
     ts, acts = [], []
+    native_parent, native_kind, native_id = None, None, None
     for e in evs:
         t = parse_ts(e["occurred_at"])
         if t:
             ts.append(t)
         p = json.loads(e["payload"])
+        if e["event_type"] == "session_meta":
+            native_parent = p.get("native_parent_id") or native_parent
+            native_kind = p.get("native_kind") or native_kind
+            native_id = p.get("native_id") or native_id
+            if native_kind == "child":
+                sub = True
         is_prompt, text = False, None
         if e["event_type"] == "msg_user":
             text = (p.get("text") or "").strip()
@@ -85,6 +92,7 @@ def summarize(r) -> dict:
         "start_at": _local(r["start_at"]), "end_at": _local(r["end_at"]), "status": r["status"],
         "title": ((title or _readable(first_any or "")).replace("\n", " ")[:140]) or None,
         "subagent": sub, "parent_external_id": _parent_external_id(r["external_id"]) if sub else None,
+        "native_id": native_id, "native_parent_id": native_parent, "native_kind": native_kind,
         "n_events": n_links, "prompts": prompts, "tools": tools, "tokens": tokens,
         "models": sorted(models)[:3], "exec_sec": round(exec_sec),
     }
@@ -141,10 +149,11 @@ def list_sessions(start=None, end=None, agent=None, project=None, query=None,
     if project:
         rows = [r for r in rows if r["project"] == project]
     by_ext = {r["external_id"]: r["id"] for r in db.q("SELECT id, external_id FROM agent_sessions")}
+    by_native = {(r["agent"], r.get("native_id")): r["id"] for r in rows if r.get("native_id")}
     kids = {}
     for r in rows:
         if r["subagent"]:
-            r["parent_id"] = by_ext.get(r["parent_external_id"])
+            r["parent_id"] = by_native.get((r["agent"], r.get("native_parent_id"))) if r.get("native_parent_id") else by_ext.get(r["parent_external_id"])
             kids.setdefault(r["parent_id"], []).append(r["id"])
     for r in rows:
         r["children"] = kids.get(r["id"], [])

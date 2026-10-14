@@ -29,7 +29,10 @@ TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".py", ".log", ".ts", ".js",
 
 def run_lark(args, timeout=90):
     """Run one lark-cli command, return parsed JSON or None."""
-    r = subprocess.run([LARK] + args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    try:
+        r = subprocess.run([LARK] + args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
     try:
         return json.loads(r.stdout)
     except (json.JSONDecodeError, TypeError):

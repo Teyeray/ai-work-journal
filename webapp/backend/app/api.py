@@ -24,6 +24,31 @@ async def _lang(request: Request, call_next):
     i18n.set_lang(request.cookies.get("lang") or "zh")
     return await call_next(request)
 
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _origin_is_local(origin: str) -> bool:
+    from urllib.parse import urlsplit
+    try:
+        parsed = urlsplit(origin)
+        return parsed.scheme in {"http", "https"} and parsed.hostname in {"127.0.0.1", "localhost", "::1"} and parsed.port == config.PORT
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def _local_origin_guard(request: Request, call_next):
+    """Any web page can make a browser send a state-changing request to
+    127.0.0.1. Refuse those: mutating API calls must come from the dashboard
+    itself. A request without an Origin (curl, the CLI, the scheduler) is not
+    a browser and is left alone."""
+    origin = request.headers.get("origin")
+    if origin and request.method not in _SAFE_METHODS and request.url.path.startswith("/api/"):
+        if not _origin_is_local(origin):
+            return JSONResponse({"detail": "cross-origin request refused"}, status_code=403)
+    return await call_next(request)
+
+
 _STATE = {"revision": 0, "subscribers": [], "lock": threading.Lock()}
 
 

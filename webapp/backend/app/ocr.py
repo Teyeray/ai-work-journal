@@ -5,6 +5,8 @@
                 OpenAI gpt-4o-mini, a local Ollama / vLLM / LM Studio server …
     http        your own OCR service (PaddleOCR, RapidOCR, Tesseract behind a
                 small HTTP wrapper …): POST the image, read the text from JSON
+    vision      macOS only: Apple's Vision framework, fully on this machine.
+                Nothing is uploaded; there is no network call in this path.
     none        no OCR
 
 Configured in webapp/config.json "ocr" (see config.OCR). Keys are read from the
@@ -12,15 +14,24 @@ environment or <config dir>/.env, never from the repo.
 """
 import base64
 import json
+import os
 import re
+import subprocess
+import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from .i18n import tr
 from . import config
 
 API_ENGINES = ("openai", "http")
+# on-device engines: no key, no network, nothing leaves the machine
+LOCAL_ENGINES = ("vision",)
+VISION_ALIASES = ("vision", "macos-vision", "apple-vision", "local-vision")
+SWIFT_SOURCE = Path(__file__).resolve().parent / "vision_ocr.swift"
 PROMPT = ("Read all text visible in this screenshot. Output plain text only, line by line in "
           "reading order, keeping the original language (Chinese, English, code …). "
           "No descriptions, no markdown, no commentary.")
@@ -53,7 +64,8 @@ def clean(text: str) -> str:
 
 
 def engine() -> str:
-    return (config.OCR.get("engine") or "none").lower()
+    raw = (config.OCR.get("engine") or "none").lower().strip()
+    return "vision" if raw in VISION_ALIASES else raw
 
 
 def is_api() -> bool:
@@ -70,6 +82,95 @@ def _openai_target() -> tuple[str, str, str]:
     return base, key, o.get("model") or "qwen3.5-ocr"
 
 
+def vision_cfg() -> dict:
+    return config.OCR.get("vision") or {}
+
+
+def _vision_cache_dir() -> Path:
+    return config.osutil.cache_dir() / "vision-ocr"
+
+
+def _prebuilt_vision() -> str | None:
+    """A binary the user built or deployed themselves wins; never rebuilt."""
+    b = config.osutil.expand(vision_cfg().get("binary") or "")
+    return b if b and os.path.isfile(b) and os.access(b, os.X_OK) else None
+
+
+def vision_binary() -> str:
+    """Path to the local Vision helper, compiling the bundled Swift source into
+    the external cache dir on first use. Raises OcrError when unavailable."""
+    pre = _prebuilt_vision()
+    if pre:
+        return pre
+    if sys.platform != "darwin":
+        raise OcrError("ocr.engine=vision needs macOS (Apple Vision); "
+                       "use openai/http/screenpipe on this platform")
+    swiftc = config.osutil.which("swiftc") or "/usr/bin/swiftc"
+    if not os.path.exists(swiftc):
+        raise OcrError("no swiftc found; install the Xcode Command Line Tools "
+                       "or set ocr.vision.binary to a prebuilt helper")
+    out_dir = _vision_cache_dir()
+    out = out_dir / "vision-ocr"
+    try:
+        newest_src = SWIFT_SOURCE.stat().st_mtime
+    except OSError:
+        raise OcrError("bundled vision_ocr.swift is missing") from None
+    if out.is_file() and os.access(out, os.X_OK) and out.stat().st_mtime >= newest_src:
+        return str(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".building")
+    try:
+        r = subprocess.run([swiftc, "-O", "-o", str(tmp), str(SWIFT_SOURCE)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace",
+                           timeout=float(vision_cfg().get("compile_timeout", 300)),
+                           env=config.osutil.tool_env(), cwd=str(out_dir),
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        tmp.unlink(missing_ok=True)
+        raise OcrError("compiling the Vision helper timed out") from None
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        raise OcrError(f"cannot run swiftc: {e}") from None
+    if r.returncode != 0 or not tmp.is_file():
+        tmp.unlink(missing_ok=True)
+        raise OcrError("swiftc failed: " + (r.stderr or r.stdout or "")[-300:])
+    tmp.replace(out)
+    return str(out)
+
+
+def _vision(image: bytes, mime: str) -> str:
+    exe = vision_binary()
+    langs = vision_cfg().get("languages") or ["zh-Hans", "zh-Hant", "en-US"]
+    fd, tmp = tempfile.mkstemp(prefix="ajw-ocr-", suffix=".png" if "png" in (mime or "") else ".jpg")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(image)
+        proc = subprocess.run([exe, tmp, *[str(x) for x in langs]],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=float(vision_cfg().get("timeout", 30)),
+                              env=config.osutil.tool_env(), stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise OcrError("macOS Vision OCR timed out") from None
+    except OSError as e:
+        raise OcrError(f"cannot run the Vision helper: {e}") from None
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    if proc.returncode != 0:
+        raise OcrError(f"Vision helper exited {proc.returncode}: {(proc.stderr or '')[-300:]}")
+    try:
+        out = json.loads(proc.stdout)
+    except ValueError:
+        raise OcrError(f"Vision helper returned no JSON: {proc.stdout[:200]!r}") from None
+    text = out.get("text")
+    if not isinstance(text, str):
+        raise OcrError("Vision helper returned no text field")
+    return clean(text)
+
+
 def configured() -> tuple[bool, str]:
     """Is the selected engine usable? (ok, what is missing)"""
     e = engine()
@@ -82,6 +183,12 @@ def configured() -> tuple[bool, str]:
         return True, ""
     if e == "http":
         return (True, "") if config.OCR.get("http", {}).get("url") else (False, tr("ocr.http.url 未设置", "ocr.http.url is not set"))
+    if e == "vision":
+        try:
+            vision_binary()
+            return True, ""
+        except OcrError as ex:
+            return False, str(ex)
     return e in ("screenpipe", "none"), ""
 
 
@@ -152,11 +259,18 @@ def _http(image: bytes, mime: str) -> str:
 
 
 def recognize(image: bytes, mime: str = "image/jpeg") -> dict:
-    """{text, engine, ms}. Raises OcrError when the engine fails or is not an API one."""
+    """{text, engine, ms}. Raises OcrError when the engine fails or cannot read images."""
     e = engine()
     ok, why = configured()
+    if e in LOCAL_ENGINES:
+        if not ok:
+            raise OcrError(why)
+        t0 = time.monotonic()
+        return {"text": _vision(image, mime), "engine": e,
+                "ms": int((time.monotonic() - t0) * 1000)}
     if e not in API_ENGINES:
-        raise OcrError(f"OCR engine '{e}' does not read images (set ocr.engine to openai or http)")
+        raise OcrError(f"OCR engine '{e}' does not read images "
+                       "(set ocr.engine to openai, http or vision)")
     if not ok:
         raise OcrError(why)
     t0 = time.monotonic()
@@ -174,4 +288,13 @@ def describe() -> dict:
         out.update(model=model, base_url=base, has_key=bool(key))
     elif e == "http":
         out["url"] = config.OCR.get("http", {}).get("url")
+    elif e == "vision":
+        v = vision_cfg()
+        out.update(local=True, platform=sys.platform, languages=v.get("languages")
+                   or ["zh-Hans", "zh-Hant", "en-US"], timeout=v.get("timeout", 30))
+        try:
+            out["binary"] = vision_binary()
+        except OcrError as ex:
+            out["binary"] = None
+            out["problem"] = str(ex)
     return out

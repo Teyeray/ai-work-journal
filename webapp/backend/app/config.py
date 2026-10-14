@@ -95,7 +95,9 @@ OCR = osutil._merge({"engine": "screenpipe", "reocr_screenpipe": False,
                      "openai": {"base_url": "", "model": "qwen3.5-ocr",
                                 "api_key_env": "OCR_API_KEY", "base_url_env": "OCR_BASE_URL",
                                 "timeout": 60, "max_tokens": 2048},
-                     "http": {"url": "", "mode": "json", "text_path": "text", "headers": {}, "timeout": 60}},
+                     "http": {"url": "", "mode": "json", "text_path": "text", "headers": {}, "timeout": 60},
+                     "vision": {"binary": "", "languages": ["zh-Hans", "zh-Hant", "en-US"],
+                                "timeout": 30, "compile_timeout": 300}},
                     _web_cfg.get("ocr", {}))
 CAPTURE = {"enabled": False, "interval_sec": 60, "keep_days": 14, "max_width": 1600,
            "quality": 70, "skip_unchanged": True, **_web_cfg.get("capture", {})}

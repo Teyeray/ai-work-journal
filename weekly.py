@@ -67,12 +67,18 @@ def main():
     combined.parent.mkdir(exist_ok=True)
     combined.write_text("\n\n".join(parts), encoding="utf-8")
     out_path = WEEKLY / f"{label}.md"
+    keep = out_path.exists() and "LLM 生成失败" not in out_path.read_text(encoding="utf-8")
     try:
         out = run_pi(PROMPT.replace("{label}", label), combined, timeout=1200)
     except Exception as e:
-        print(f"pi failed: {e}\nfalling back to concatenated dailies")
+        if keep:
+            print(f"report LLM failed: {e}\nkept the previous weekly report: {out_path}")
+            return
+        print(f"report LLM failed: {e}\nfalling back to concatenated dailies")
         out = f"> 警告: LLM 生成失败,以下为日报拼接。\n\n" + combined.read_text(encoding="utf-8")
-    out_path.write_text(out + "\n", encoding="utf-8")
+    tmp = out_path.with_suffix(".md.tmp")
+    tmp.write_text(out + "\n", encoding="utf-8")
+    tmp.replace(out_path)
     print(f"weekly report written: {out_path}")
     if load_schedule()["feishu_push"]:
         fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(out_path)],

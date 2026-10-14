@@ -16,8 +16,83 @@ import re
 import time
 from pathlib import Path
 
+import agent_sources
+
 from .. import config, db
 from ..timeutil import iso, now_utc, local_day_key, parse_ts
+
+
+def optional_sources_status() -> dict:
+    """Which optional agent sources are configured/readable, and why not."""
+    return agent_sources.status()
+
+
+def scan_optional(days_back: int = 2) -> dict:
+    """Ingest the optional Codex / OpenCode agent sources.
+
+    Idempotent by content: every event key is sha256(source|native session|
+    timestamp|text), so re-scanning an unchanged day inserts nothing. Sources
+    that are not configured are reported as skipped, never silently.
+    """
+    end = now_utc()
+    start = end - dt.timedelta(days=days_back)
+    try:
+        sessions = agent_sources.collect(start, end)
+    except Exception:  # noqa: BLE001 — never let an optional source break ingest
+        sessions = []
+    status = agent_sources.status()
+    skipped = {k: v["skip_reason"] for k, v in status.items()
+               if isinstance(v, dict) and v.get("skip_reason")}
+    if not sessions:
+        return {"source": "sessions:optional", "new": 0, "days": [], "skipped": skipped,
+                "sessions": 0, "agents": []}
+    by_source: dict = {}
+    for s in sessions:
+        by_source.setdefault(s["agent"], []).append(s)
+    total_new, affected = 0, set()
+    with db.Tx():
+        for agent, group in by_source.items():
+            prefix = f"sessions:{agent}"
+            for s in group:
+                native = s.get("native_id") or s["file"]
+                meta = {"cwd": s.get("cwd"), "session_id": native, "native_id": native,
+                        "native_parent_id": s.get("native_parent_id"),
+                        "native_kind": s.get("native_kind") or "root",
+                        "forked_from_id": s.get("forked_from_id"),
+                        "user_channel": bool(s.get("user_channel", True)),
+                        "self_run": bool(s.get("self_run", False)), "file": s["file"]}
+                r = db.ex("INSERT INTO source_events(source_key,event_key,event_type,"
+                          "occurred_at,observed_at,day_key,payload,created_at) "
+                          "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_key,event_key) DO NOTHING",
+                          (prefix, _sha(f"{prefix}|meta|{native}"), "session_meta",
+                           iso(s["first"]), iso(now_utc()), local_day_key(s["first"]),
+                           json.dumps(meta, ensure_ascii=False), iso(now_utc())))
+                total_new += r.rowcount
+                affected.add(local_day_key(s["first"]))
+                for turn in s.get("turns") or []:
+                    ts = parse_ts(turn.get("t"))
+                    if ts is None:
+                        continue
+                    role = turn.get("role") or "user"
+                    event_type = "msg_" + (role if role in ("user", "assistant", "tool") else "assistant")
+                    ev = _sha(f"{prefix}|{native}|{turn.get('native_event_id') or ''}|{turn.get('t')}|{role}|{turn.get('x', '')}")
+                    r = db.ex("INSERT INTO source_events(source_key,event_key,event_type,"
+                              "occurred_at,observed_at,day_key,payload,created_at) "
+                              "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_key,event_key) DO NOTHING",
+                              (prefix, ev, event_type, iso(ts), iso(now_utc()),
+                               local_day_key(ts),
+                               json.dumps({"role": role, "success": turn.get("success"), "text": (turn.get("x") or "")[:4000],
+                                           "typed": bool(turn.get("typed", False)),
+                                           "file": s["file"]}, ensure_ascii=False),
+                               iso(now_utc())))
+                    total_new += r.rowcount
+                    affected.add(local_day_key(ts))
+        for agent in by_source:
+            db.log_sync(f"sessions:{agent}", 0)
+    for agent in by_source:
+        _refresh_sessions(agent, [])
+    return {"source": "sessions:optional", "new": total_new, "days": sorted(affected),
+            "skipped": skipped, "sessions": len(sessions), "agents": sorted(by_source)}
 
 
 def _sha(s: str) -> str:
