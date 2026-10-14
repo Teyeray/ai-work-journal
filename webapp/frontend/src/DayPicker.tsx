@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, fmtDur, isCategory } from "./api";
+import { tr, label, locale } from "./i18n";
 
 /** Day navigator: ← [10-07 周三 ▾] →, opening a month calendar whose cells are
  *  shaded by how much you worked that day (one-hue sequential ramp). Stays the
@@ -7,7 +8,6 @@ import { api, fmtDur, isCategory } from "./api";
 
 type DayInfo = { day: string; human_sec: number; agent_sec: number; has_observation: boolean; top: string[] };
 
-const WD = ["日", "一", "二", "三", "四", "五", "六"];
 // sequential, one hue light→dark (accent); text flips to white on the two darkest
 const RAMP = ["#e9ebfa", "#c5caf1", "#97a0e4", "#6872d4", "#424bab"];
 const STEPS = [3600, 3 * 3600, 5 * 3600, 7 * 3600]; // <1h, <3h, <5h, <7h, ≥7h of your time
@@ -44,7 +44,9 @@ function loadMonth(m: string, fresh = false): Promise<Record<string, DayInfo>> {
 }
 
 export function fmtDay(d: string) {
-  return `${d.slice(5)} 周${WD[new Date(d + "T12:00:00").getDay()]}`;
+  const wd = new Date(d + "T12:00:00").getDay();
+  return tr(`${d.slice(5)} 周${["日", "一", "二", "三", "四", "五", "六"][wd]}`,
+    `${d.slice(5)} ${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd]}`);
 }
 
 export function DayPicker({ value, days, onChange, hotkeys = false }: {
@@ -127,34 +129,34 @@ export function DayPicker({ value, days, onChange, hotkeys = false }: {
   return (
     <div ref={root} className="relative flex items-center gap-1">
       <button className="icon-btn" disabled={!prev} onClick={() => prev && onChange(prev)}
-        title={prev ? `前一天 ${fmtDay(prev)}(←)` : "没有更早的记录"}>←</button>
+        title={prev ? tr(`前一天 ${fmtDay(prev)}(←)`, `Previous day ${fmtDay(prev)} (←)`) : tr("没有更早的记录", "No earlier records")}>←</button>
       <button className="dp-trigger" aria-haspopup="dialog" aria-expanded={open}
-        onClick={() => setOpen((o) => !o)} title="选择日期">
+        onClick={() => setOpen((o) => !o)} title={tr("选择日期", "Pick a date")}>
         <span className="tabular-nums">{fmtDay(value)}</span>
         <span className="text-neutral-400">▾</span>
       </button>
       <button className="icon-btn" disabled={!next} onClick={() => next && onChange(next)}
-        title={next ? `后一天 ${fmtDay(next)}(→)` : "已是最新一天"}>→</button>
+        title={next ? tr(`后一天 ${fmtDay(next)}(→)`, `Next day ${fmtDay(next)} (→)`) : tr("已是最新一天", "Already the latest day")}>→</button>
 
       {open && (
-        <div className="dp-pop" role="dialog" aria-label="选择日期" tabIndex={-1}
+        <div className="dp-pop" role="dialog" aria-label={tr("选择日期", "Pick a date")} tabIndex={-1}
           onKeyDown={onGridKey} ref={(el) => el?.focus({ preventScroll: true })}>
           <div className="flex items-center gap-1">
-            <button className="icon-btn h-6 w-6" disabled={month <= minMonth} onClick={() => setMonth(shiftMonth(month, -1))} title="上个月">‹</button>
+            <button className="icon-btn h-6 w-6" disabled={month <= minMonth} onClick={() => setMonth(shiftMonth(month, -1))} title={tr("上个月", "Previous month")}>‹</button>
             <div className="min-w-[84px] text-center text-[13px] font-medium text-neutral-800">
-              {+month.slice(0, 4)}年{+month.slice(5)}月
+              {tr(`${+month.slice(0, 4)}年${+month.slice(5)}月`, new Date(month + "-15T12:00:00").toLocaleDateString(locale(), { year: "numeric", month: "short" }))}
             </div>
-            <button className="icon-btn h-6 w-6" disabled={month >= maxMonth} onClick={() => setMonth(shiftMonth(month, 1))} title="下个月">›</button>
+            <button className="icon-btn h-6 w-6" disabled={month >= maxMonth} onClick={() => setMonth(shiftMonth(month, 1))} title={tr("下个月", "Next month")}>›</button>
             <div className="ml-auto flex gap-1">
-              {known.has(today) && <button className="dp-chip" onClick={() => pick(today)}>今天</button>}
-              {known.has(yesterday) && <button className="dp-chip" onClick={() => pick(yesterday)}>昨天</button>}
-              {latest && latest !== today && <button className="dp-chip" onClick={() => pick(latest)}>最新</button>}
+              {known.has(today) && <button className="dp-chip" onClick={() => pick(today)}>{tr("今天", "Today")}</button>}
+              {known.has(yesterday) && <button className="dp-chip" onClick={() => pick(yesterday)}>{tr("昨天", "Yesterday")}</button>}
+              {latest && latest !== today && <button className="dp-chip" onClick={() => pick(latest)}>{tr("最新", "Latest")}</button>}
             </div>
           </div>
 
           <div className="mt-2 grid grid-cols-7 gap-[3px]">
-            {["一", "二", "三", "四", "五", "六", "日"].map((w) => (
-              <div key={w} className="pb-0.5 text-center text-[10.5px] text-neutral-400">{w}</div>
+            {(tr("一,二,三,四,五,六,日", "M,T,W,T,F,S,S")).split(",").map((w, wi) => (
+              <div key={wi} className="pb-0.5 text-center text-[10.5px] text-neutral-400">{w}</div>
             ))}
             {cells.map((d) => {
               const di = info[d], s = shade(di), has = known.has(d);
@@ -176,18 +178,18 @@ export function DayPicker({ value, days, onChange, hotkeys = false }: {
           <div className="mt-2 min-h-[34px] border-t border-neutral-100 pt-1.5 text-[11.5px] leading-snug">
             <div className="font-medium text-neutral-700">{fmtDay(hv)}</div>
             <div className="truncate text-neutral-500">
-              {!known.has(hv) ? "没有记录"
+              {!known.has(hv) ? tr("没有记录", "No records")
                 : !hi ? "…"
                 : !hi.has_observation
-                  ? (hi.agent_sec > 0 ? `未采集窗口 · agent 累加 ${fmtDur(hi.agent_sec)}` : "未采集窗口")
-                  : `你 ${fmtDur(hi.human_sec)} · agent 累加 ${fmtDur(hi.agent_sec)}${hi.top.length ? " · " + hi.top.join("、") : ""}`}
+                  ? (hi.agent_sec > 0 ? tr(`未采集窗口 · agent 累加 ${fmtDur(hi.agent_sec)}`, `No window capture · agent total ${fmtDur(hi.agent_sec)}`) : tr("未采集窗口", "No window capture"))
+                  : tr(`你 ${fmtDur(hi.human_sec)} · agent 累加 ${fmtDur(hi.agent_sec)}`, `You ${fmtDur(hi.human_sec)} · agent total ${fmtDur(hi.agent_sec)}`) + (hi.top.length ? " · " + hi.top.map(label).join(tr("、", ", ")) : "")}
             </div>
           </div>
 
           <div className="mt-1.5 flex items-center gap-1 text-[10.5px] text-neutral-400">
-            少{RAMP.map((c) => <span key={c} className="dp-key" style={{ background: c }} />)}多
-            <span className="dp-key agent ml-2" />仅 agent
-            <span className="dp-key ml-2 border border-neutral-200 bg-white" />未采集
+            {tr("少", "Less")}{RAMP.map((c) => <span key={c} className="dp-key" style={{ background: c }} />)}{tr("多", "More")}
+            <span className="dp-key agent ml-2" />{tr("仅 agent", "Agent only")}
+            <span className="dp-key ml-2 border border-neutral-200 bg-white" />{tr("未采集", "No capture")}
           </div>
         </div>
       )}

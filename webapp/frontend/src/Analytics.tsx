@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import { fmtDur, OTHER_PROJECT_COLOR, projectColor } from "./api";
 import { useSse } from "./sse";
+import { label, locale, tr } from "./i18n";
 
 /**
  * Analytics: how a range of days went, each block answering one question.
@@ -39,7 +40,11 @@ const YOU = "#3f3f46", AGENT = "#a1a1aa";
 const ORDINAL = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"];   // blue 250→650
 const SEQ = ["#f3f7fd", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
 const WD = "日一二三四五六";
-const dayLabel = (d: string) => `${+d.slice(5, 7)}/${+d.slice(8, 10)} 周${WD[new Date(d + "T12:00:00").getDay()]}`;
+const dayLabel = (d: string) => {
+  const dt = new Date(d + "T12:00:00");
+  const md = `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
+  return tr(`${md} 周${WD[dt.getDay()]}`, `${md} ${dt.toLocaleDateString(locale(), { weekday: "short" })}`);
+};
 const h1 = (sec: number) => +(sec / 3600).toFixed(2);
 
 export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) => void }) {
@@ -68,16 +73,16 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">分析</h1>
+          <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{tr("分析", "Analytics")}</h1>
           <div className="text-[12.5px] text-neutral-400">
-            {data ? `${s!.days} 天 · ${s!.observed_days} 天有窗口观察 · 对比前 ${s!.days} 天` : "加载中…"}
+            {data ? tr(`${s!.days} 天 · ${s!.observed_days} 天有窗口观察 · 对比前 ${s!.days} 天`, `${s!.days} days · ${s!.observed_days} with window observation · vs previous ${s!.days} days`) : tr("加载中…", "Loading…")}
             {err && <span className="ml-2 text-red-600">{err}</span>}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="seg">
             {[7, 14, 30].map((n) => (
-              <button key={n} className={span === n ? "on" : ""} onClick={() => setSpan(n)}>近 {n} 天</button>
+              <button key={n} className={span === n ? "on" : ""} onClick={() => setSpan(n)}>{tr(`近 ${n} 天`, `Last ${n} days`)}</button>
             ))}
           </div>
           <input type="date" value={start} max={end} onChange={(e) => { setSpan(null); setStart(e.target.value); }} className="input h-8 text-[12.5px]" />
@@ -88,56 +93,56 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
 
       {data && s && (<>
         <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-          <Tile label="日均电脑前活跃" v={s.human_per_day != null ? fmtDur(s.human_per_day) : "—"}
-            cmp={delta(s.human_per_day, p?.human_per_day, (x) => fmtDur(Math.abs(x)))} hint="只算有窗口观察的日子" />
-          <Tile label="日均 Agent 在跑" v={s.agent_per_day != null ? fmtDur(s.agent_per_day) : "—"}
-            cmp={delta(s.agent_per_day, p?.agent_per_day, (x) => fmtDur(Math.abs(x)))} hint="所有会话执行段按时间去重" />
-          <Tile label="归入项目" v={pct(s.project_share)} cmp={delta(s.project_share, p?.project_share, ppt)}
-            hint="你的时间中落在某个项目泳道的比例" />
-          <Tile label="长时间专注" v={pct(s.focus_share)} cmp={delta(s.focus_share, p?.focus_share, ppt)}
-            hint="项目时间中处于 ≥30 分钟连续段的比例" />
-          <Tile label="每小时切换" v={s.switches_per_hour != null ? s.switches_per_hour.toFixed(1) : "—"}
-            cmp={delta(s.switches_per_hour, p?.switches_per_hour, (x) => Math.abs(x).toFixed(1), true)} hint="项目泳道之间的切换,短于 1 分钟的瞥一眼不算" />
-          <Tile label="提交 / Prompt" v={`${s.commits} / ${s.prompts}`}
-            cmp={p ? { text: `前期 ${p.commits} / ${p.prompts}`, tone: "flat" } : null} hint="整个周期的合计" />
+          <Tile label={tr("日均电脑前活跃", "Daily active at computer")} v={s.human_per_day != null ? fmtDur(s.human_per_day) : "—"}
+            cmp={delta(s.human_per_day, p?.human_per_day, (x) => fmtDur(Math.abs(x)))} hint={tr("只算有窗口观察的日子", "Only days with window observation")} />
+          <Tile label={tr("日均 Agent 在跑", "Daily agent running")} v={s.agent_per_day != null ? fmtDur(s.agent_per_day) : "—"}
+            cmp={delta(s.agent_per_day, p?.agent_per_day, (x) => fmtDur(Math.abs(x)))} hint={tr("所有会话执行段按时间去重", "Execution segments of all sessions, de-duplicated by time")} />
+          <Tile label={tr("归入项目", "Assigned to projects")} v={pct(s.project_share)} cmp={delta(s.project_share, p?.project_share, ppt)}
+            hint={tr("你的时间中落在某个项目泳道的比例", "Share of your time that falls in a project lane")} />
+          <Tile label={tr("长时间专注", "Long focus")} v={pct(s.focus_share)} cmp={delta(s.focus_share, p?.focus_share, ppt)}
+            hint={tr("项目时间中处于 ≥30 分钟连续段的比例", "Share of project time in stretches of 30+ minutes")} />
+          <Tile label={tr("每小时切换", "Switches per hour")} v={s.switches_per_hour != null ? s.switches_per_hour.toFixed(1) : "—"}
+            cmp={delta(s.switches_per_hour, p?.switches_per_hour, (x) => Math.abs(x).toFixed(1), true)} hint={tr("项目泳道之间的切换,短于 1 分钟的瞥一眼不算", "Switches between project lanes; glances under 1 minute do not count")} />
+          <Tile label={tr("提交 / Prompt", "Commits / Prompts")} v={`${s.commits} / ${s.prompts}`}
+            cmp={p ? { text: tr(`前期 ${p.commits} / ${p.prompts}`, `Prev ${p.commits} / ${p.prompts}`), tone: "flat" } : null} hint={tr("整个周期的合计", "Total for the whole period")} />
         </div>
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Card title="一天的节奏" sub="每小时你在电脑前活跃的分钟数 · 悬停看 Agent 与切换">
+          <Card title={tr("一天的节奏", "Daily rhythm")} sub={tr("每小时你在电脑前活跃的分钟数 · 悬停看 Agent 与切换", "Minutes you were active at the computer each hour · hover for agent and switches")}>
             <Rhythm data={data} />
           </Card>
-          <Card title="洞察" sub="由数据计算,附依据和可信度">
+          <Card title={tr("洞察", "Insights")} sub={tr("由数据计算,附依据和可信度", "Computed from data, with evidence and confidence")}>
             <ul className="space-y-3">
               {data.insights.map((i, k) => (
                 <li key={k}>
                   <div className="flex items-start gap-2">
                     <span className="min-w-0 flex-1 text-[13.5px] font-semibold leading-snug text-neutral-900">{i.title}</span>
                     <span className={`shrink-0 rounded px-1.5 text-[11px] leading-[18px] ${i.confidence === "高" ? "bg-neutral-100 text-neutral-600" : i.confidence === "中" ? "bg-neutral-100 text-neutral-500" : "bg-amber-50 text-amber-700"}`}>
-                      可信度 {i.confidence}
+                      {tr("可信度", "Confidence")} {label(i.confidence)}
                     </span>
                   </div>
                   <div className="mt-0.5 text-[12.5px] leading-relaxed text-neutral-500">{i.detail}</div>
                 </li>
               ))}
-              {!data.insights.length && <li className="text-[12.5px] text-neutral-400">数据不足,暂时没有可靠的结论。</li>}
+              {!data.insights.length && <li className="text-[12.5px] text-neutral-400">{tr("数据不足,暂时没有可靠的结论。", "Not enough data for reliable conclusions yet.")}</li>}
             </ul>
           </Card>
         </div>
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Card title="时间都去哪了" sub="你在电脑前的时间,按项目堆叠 · 点柱子打开那一天">
+          <Card title={tr("时间都去哪了", "Where the time went")} sub={tr("你在电脑前的时间,按项目堆叠 · 点柱子打开那一天", "Your time at the computer, stacked by project · click a bar to open that day")}>
             <DailyStack data={data} onDay={goDay} />
           </Card>
-          <Card title="Agent 使用" sub="每天 Agent 在跑的时长与你发的 prompt">
+          <Card title={tr("Agent 使用", "Agent usage")} sub={tr("每天 Agent 在跑的时长与你发的 prompt", "Daily agent running time and prompts you sent")}>
             <AgentDaily data={data} />
           </Card>
         </div>
 
         <div className="grid items-start gap-4 lg:grid-cols-2">
-          <Card title="你和 Agent 在各项目上的投入" sub="你的时间 vs Agent 执行时间(去重) · 小时">
+          <Card title={tr("你和 Agent 在各项目上的投入", "You and agents per project")} sub={tr("你的时间 vs Agent 执行时间(去重) · 小时", "Your time vs agent execution time (de-duplicated) · hours")}>
             <YouVsAgent data={data} />
           </Card>
-          <Card title="专注分布" sub="项目时间按所在连续段的长度分组 · 越往下越专注">
+          <Card title={tr("专注分布", "Focus distribution")} sub={tr("项目时间按所在连续段的长度分组 · 越往下越专注", "Project time grouped by stretch length · lower is more focused")}>
             <Focus data={data} />
           </Card>
         </div>
@@ -150,13 +155,13 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
 
 type Cmp = { text: string; tone: "up" | "down" | "flat" } | null;
 const pct = (x: number | null) => (x == null ? "—" : `${Math.round(x * 100)}%`);
-const ppt = (x: number) => `${Math.abs(Math.round(x * 100))} 个百分点`;
+const ppt = (x: number) => tr(`${Math.abs(Math.round(x * 100))} 个百分点`, `${Math.abs(Math.round(x * 100))} pp`);
 function delta(cur: number | null | undefined, prev: number | null | undefined, fmt: (x: number) => string, lowerIsBetter = false): Cmp {
   if (cur == null || prev == null) return null;
   const d = cur - prev;
-  if (Math.abs(d) < 1e-9) return { text: "与前期持平", tone: "flat" };
+  if (Math.abs(d) < 1e-9) return { text: tr("与前期持平", "Same as previous"), tone: "flat" };
   const up = d > 0;
-  return { text: `${up ? "↑" : "↓"} ${fmt(d)} vs 前期`, tone: up !== lowerIsBetter ? "up" : "down" };
+  return { text: `${up ? "↑" : "↓"} ${fmt(d)} vs ${tr("前期", "prev")}`, tone: up !== lowerIsBetter ? "up" : "down" };
 }
 
 function Tile({ label, v, cmp, hint }: { label: string; v: string; cmp: Cmp; hint: string }) {
@@ -165,7 +170,7 @@ function Tile({ label, v, cmp, hint }: { label: string; v: string; cmp: Cmp; hin
       <div className="text-[12px] text-neutral-500">{label}</div>
       <div className="mt-0.5 text-[24px] font-semibold leading-tight tracking-tight tabular-nums text-neutral-900">{v}</div>
       <div className="mt-0.5 h-4 text-[11.5px] tabular-nums text-neutral-400">
-        {cmp ? <span className={cmp.tone === "flat" ? "" : "text-neutral-600"}>{cmp.text}</span> : "前期无数据"}
+        {cmp ? <span className={cmp.tone === "flat" ? "" : "text-neutral-600"}>{cmp.text}</span> : tr("前期无数据", "No previous data")}
       </div>
     </div>
   );
@@ -228,9 +233,9 @@ function DailyStack({ data, onDay }: { data: Overview; onDay: (d: string) => voi
       .sort((a, b) => tot[b] - tot[a]).slice(0, 8);
     const rest = Object.keys(tot).filter((k) => k !== OTHER && !named.includes(k));
     const groups: [string, string[], string][] = [
-      ...named.map((k) => [k, [k], projectColor(k)] as [string, string[], string]),
-      ...(rest.length ? [["其他项目", rest, OTHER_PROJECT_COLOR] as [string, string[], string]] : []),
-      ...(tot[OTHER] ? [[OTHER, [OTHER], "#d4d7dd"] as [string, string[], string]] : []),
+      ...named.map((k) => [label(k), [k], projectColor(k)] as [string, string[], string]),
+      ...(rest.length ? [[tr("其他项目", "Other projects"), rest, OTHER_PROJECT_COLOR] as [string, string[], string]] : []),
+      ...(tot[OTHER] ? [[label(OTHER), [OTHER], "#d4d7dd"] as [string, string[], string]] : []),
     ];
     // consecutive days without window data → one band, one label
     const unobs: [string, string][] = [];
@@ -249,7 +254,7 @@ function DailyStack({ data, onDay }: { data: Overview; onDay: (d: string) => voi
         formatter: (ps: unknown) => {
           const arr = ps as { dataIndex: number; seriesName: string; color: string; value: number }[];
           const d = data.days[arr[0].dataIndex];
-          if (!d.has_observation) return `<b>${dayLabel(d.day)}</b><br/>没有窗口数据<br/>Agent 在跑 ${fmtDur(d.agent_sec)}`;
+          if (!d.has_observation) return `<b>${dayLabel(d.day)}</b><br/>${tr("没有窗口数据", "No window data")}<br/>${tr("Agent 在跑", "Agent running")} ${fmtDur(d.agent_sec)}`;
           return `<b>${dayLabel(d.day)}</b> · ${fmtDur(d.human_sec)}<div style="margin-top:4px">` +
             arr.filter((x) => x.value > 0).sort((a, b) => b.value - a.value)
               .map((x) => row(x.color, x.seriesName, fmtDur(x.value * 3600))).join("") + "</div>";
@@ -265,7 +270,7 @@ function DailyStack({ data, onDay }: { data: Overview; onDay: (d: string) => voi
         ...(gi === 0 && unobs.length ? {
           markArea: {
             silent: true, itemStyle: { color: "rgba(160,165,175,.10)" },
-            label: { show: true, position: "insideTop" as const, color: MUTED, fontSize: 10.5, formatter: "无窗口数据" },
+            label: { show: true, position: "insideTop" as const, color: MUTED, fontSize: 10.5, formatter: tr("无窗口数据", "No window data") },
             data: unobs.map(([a, b]) => [{ xAxis: a }, { xAxis: b }]),
           },
         } : {}),
@@ -289,17 +294,17 @@ function YouVsAgent({ data }: { data: Overview }) {
         const arr = ps as { dataIndex: number }[];
         const r = rows[arr[0].dataIndex];
         const ratio = r.human_sec ? ` · 1:${(r.agent_sec / r.human_sec).toFixed(1)}` : "";
-        return `<b>${r.project}</b>${r.priority != null ? ` · P${r.priority}` : ""}${ratio}` +
-          row(YOU, "你", fmtDur(r.human_sec)) + row(AGENT, "Agent", fmtDur(r.agent_sec));
+        return `<b>${label(r.project)}</b>${r.priority != null ? ` · P${r.priority}` : ""}${ratio}` +
+          row(YOU, tr("你", "You"), fmtDur(r.human_sec)) + row(AGENT, "Agent", fmtDur(r.agent_sec));
       },
     },
     yAxis: {
-      type: "category", data: rows.map((r) => r.project), ...axisCat,
+      type: "category", data: rows.map((r) => label(r.project)), ...axisCat,
       axisLabel: { color: INK2, fontSize: 12, width: 110, overflow: "truncate" },
     },
     xAxis: { type: "value", ...axisVal, axisLabel: { ...axisVal.axisLabel, formatter: (v: number) => `${v}h` } },
     series: [
-      { name: "你", type: "bar", color: YOU, barMaxWidth: 10, barGap: "30%", itemStyle: { borderRadius: [0, 4, 4, 0] },
+      { name: tr("你", "You"), type: "bar", color: YOU, barMaxWidth: 10, barGap: "30%", itemStyle: { borderRadius: [0, 4, 4, 0] },
         label: { show: true, position: "right", color: INK2, fontSize: 11, formatter: (p: { value: unknown }) => ((p.value as number) > 0 ? `${p.value}h` : "") },
         data: rows.map((r) => h1(r.human_sec)) },
       { name: "Agent", type: "bar", color: AGENT, barMaxWidth: 10, itemStyle: { borderRadius: [0, 4, 4, 0] },
@@ -323,10 +328,10 @@ function Focus({ data }: { data: Overview }) {
       ...base.tooltip, trigger: "item",
       formatter: (p: unknown) => {
         const x = p as { dataIndex: number };
-        return `<b>连续段 ${data.focus_bins[x.dataIndex]}</b><br/>${fmtDur(mins[x.dataIndex] * 60)} · 占项目时间 ${Math.round(mins[x.dataIndex] / total * 100)}%`;
+        return `<b>${tr("连续段", "Stretch")} ${label(data.focus_bins[x.dataIndex])}</b><br/>${fmtDur(mins[x.dataIndex] * 60)} · ${tr("占项目时间", "of project time")} ${Math.round(mins[x.dataIndex] / total * 100)}%`;
       },
     },
-    yAxis: { type: "category", inverse: true, data: data.focus_bins, ...axisCat, axisLabel: { color: INK2, fontSize: 12 } },
+    yAxis: { type: "category", inverse: true, data: data.focus_bins.map(label), ...axisCat, axisLabel: { color: INK2, fontSize: 12 } },
     xAxis: { type: "value", ...axisVal, axisLabel: { ...axisVal.axisLabel, formatter: (v: number) => `${Math.round(v / 60)}h` } },
     series: [{
       type: "bar", barMaxWidth: 18,
@@ -339,7 +344,7 @@ function Focus({ data }: { data: Overview }) {
   return (
     <div>
       {useEChart(option, 200)}
-      {longest && <div className="mt-1 text-[12px] text-neutral-500">最长一段:{longest.project} 连续 {fmtDur(longest.min * 60)}</div>}
+      {longest && <div className="mt-1 text-[12px] text-neutral-500">{tr(`最长一段:${longest.project} 连续 ${fmtDur(longest.min * 60)}`, `Longest stretch: ${longest.project}, ${fmtDur(longest.min * 60)} continuous`)}</div>}
     </div>
   );
 }
@@ -360,8 +365,8 @@ function Rhythm({ data }: { data: Overview }) {
           const [x, y, v] = (p as { value: [number, number, number] }).value;
           const d = days[y];
           return `<b>${dayLabel(d.day)} ${String(x).padStart(2, "0")}:00</b><br/>` +
-            (v < 0 ? "没有窗口数据" : `你 ${v} 分钟 · 切换 ${d.hourly_switches[x]} 次`) +
-            `<br/>Agent 在跑 ${Math.round(d.hourly_agent[x])} 分钟`;
+            (v < 0 ? tr("没有窗口数据", "No window data") : tr(`你 ${v} 分钟 · 切换 ${d.hourly_switches[x]} 次`, `You ${v} min · ${d.hourly_switches[x]} ${d.hourly_switches[x] === 1 ? "switch" : "switches"}`)) +
+            `<br/>${tr(`Agent 在跑 ${Math.round(d.hourly_agent[x])} 分钟`, `Agent running ${Math.round(d.hourly_agent[x])} min`)}`;
         },
       },
       xAxis: { type: "category", data: [...Array(24).keys()].map((h) => `${h}`), ...axisCat, splitArea: { show: false } },
@@ -369,12 +374,12 @@ function Rhythm({ data }: { data: Overview }) {
       visualMap: {
         type: "piecewise", orient: "horizontal", left: 76, bottom: 0, itemWidth: 14, itemHeight: 10, textStyle: { color: MUTED, fontSize: 11 },
         pieces: [
-          { value: -1, label: "无观察", color: "#f1f2f4" },
+          { value: -1, label: tr("无观察", "No data"), color: "#f1f2f4" },
           { min: 0, max: 0, label: "0", color: "#fafafa" },
           { min: 1, max: 10, label: "1–10", color: SEQ[1] },
           { min: 11, max: 25, label: "11–25", color: SEQ[3] },
           { min: 26, max: 40, label: "26–40", color: SEQ[5] },
-          { min: 41, max: 60, label: "41–60 分钟", color: SEQ[7] },
+          { min: 41, max: 60, label: tr("41–60 分钟", "41–60 min"), color: SEQ[7] },
         ],
       },
       series: [{ type: "heatmap", data: cells, itemStyle: { borderColor: "#fff", borderWidth: 2, borderRadius: 3 } }],
@@ -392,12 +397,12 @@ function AgentDaily({ data }: { data: Overview }) {
     grid: { left: 34, right: 6, top: 26, bottom: 22 },
     tooltip: { ...base.tooltip, trigger: "axis", axisPointer: { type: "shadow", shadowStyle: { color: "rgba(0,0,0,.04)" } },
       formatter: (ps: unknown) => { const a = (ps as { dataIndex: number }[])[0]; const d = data.days[a.dataIndex];
-        return `<b>${dayLabel(d.day)}</b><br/>${title} ${fmt(vals[a.dataIndex])}<br/>会话 ${d.sessions} · 峰值并行 ${d.agent_peak}`; } },
+        return `<b>${dayLabel(d.day)}</b><br/>${title} ${fmt(vals[a.dataIndex])}<br/>${tr(`会话 ${d.sessions} · 峰值并行 ${d.agent_peak}`, `Sessions ${d.sessions} · peak parallel ${d.agent_peak}`)}`; } },
     xAxis: { type: "category", data: data.days.map((d) => dayLabel(d.day).split(" ")[0]), ...axisCat },
     yAxis: { type: "value", ...axisVal, axisLabel: { ...axisVal.axisLabel, formatter: (v: number) => `${v}${unit}` } },
     series: [{ type: "bar", barMaxWidth: 16, color: "#2a78d6", itemStyle: { borderRadius: [3, 3, 0, 0] }, data: vals }],
   });
-  const exec = useMemo(() => mk("Agent 在跑(去重)", data.days.map((d) => h1(d.agent_sec)), (v) => fmtDur(v * 3600), "h"), [data]); // eslint-disable-line
-  const prm = useMemo(() => mk("你发的 prompt", data.days.map((d) => d.prompts), (v) => `${v} 条`, ""), [data]); // eslint-disable-line
+  const exec = useMemo(() => mk(tr("Agent 在跑(去重)", "Agent running (de-duplicated)"), data.days.map((d) => h1(d.agent_sec)), (v) => fmtDur(v * 3600), "h"), [data]); // eslint-disable-line
+  const prm = useMemo(() => mk(tr("你发的 prompt", "Prompts you sent"), data.days.map((d) => d.prompts), (v) => tr(`${v} 条`, `${v}`), ""), [data]); // eslint-disable-line
   return <div className="space-y-1">{useEChart(exec, 150)}{useEChart(prm, 150)}</div>;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { tr } from "./i18n";
 
 /**
  * 问 AI: a side panel available on every tab. The backend runs a tool loop over
@@ -28,21 +29,35 @@ interface Step { id: string; name: string; args: Record<string, unknown>; summar
 interface Turn { turn: number; question: string; steps: Step[]; answer: string; error?: string }
 interface Thread { id: number; title: string; updated_at: string }
 
-const TOOL_LABEL: Record<string, string> = {
-  search: "全局搜索", list_projects: "项目列表", range_summary: "区间统计", get_day: "查看某天",
-  get_windows: "窗口记录", find_sessions: "查找会话", read_session: "读会话", list_commits: "提交记录",
-  screen_text: "屏幕 OCR", feishu: "飞书记录", list_reports: "日报列表", read_report: "读日报",
-};
+const toolLabel = (name: string): string => ({
+  search: tr("全局搜索", "Global search"), list_projects: tr("项目列表", "Project list"), range_summary: tr("区间统计", "Range summary"),
+  get_day: tr("查看某天", "View a day"), get_windows: tr("窗口记录", "Window log"), find_sessions: tr("查找会话", "Find sessions"),
+  read_session: tr("读会话", "Read session"), list_commits: tr("提交记录", "Commits"), screen_text: tr("屏幕 OCR", "Screen OCR"),
+  feishu: tr("飞书记录", "Feishu records"), list_reports: tr("日报列表", "Report list"), read_report: tr("读日报", "Read report"),
+} as Record<string, string>)[name] ?? name;
 
-const SUGGEST: Record<string, string[]> = {
-  today: ["今天我主要在干什么?时间都去哪了", "今天哪段时间切换最频繁,在切什么", "今天 agent 替我做了哪些事"],
-  analytics: ["上周和这周相比,各项目投入有什么变化", "我一般几点效率最高", "最近哪个项目被冷落了"],
-  sessions: ["这个会话做了什么,结果如何", "最近一周我给 agent 的指令有什么共同问题", "找一下我让 agent 部署上线的会话"],
-  projects: ["每个项目最近的进展和卡点", "paperfacts 最近两周做了哪些功能", "哪些项目我花了时间但没有提交"],
-  reports: ["把上周的周报压缩成三句话", "日报里反复出现的待办有哪些", "对比这周和上周的日报"],
-};
+const suggest = (tab: string): string[] => ({
+  today: [tr("今天我主要在干什么?时间都去哪了", "What did I mainly work on today? Where did the time go?"),
+    tr("今天哪段时间切换最频繁,在切什么", "When did I switch context most today, and between what?"),
+    tr("今天 agent 替我做了哪些事", "What did agents do for me today?")],
+  analytics: [tr("上周和这周相比,各项目投入有什么变化", "How did time per project change from last week to this week?"),
+    tr("我一般几点效率最高", "What time of day am I usually most productive?"),
+    tr("最近哪个项目被冷落了", "Which project has been neglected lately?")],
+  sessions: [tr("这个会话做了什么,结果如何", "What did this session do, and how did it turn out?"),
+    tr("最近一周我给 agent 的指令有什么共同问题", "What problems do my prompts to agents share this past week?"),
+    tr("找一下我让 agent 部署上线的会话", "Find the sessions where I had an agent deploy something")],
+  projects: [tr("每个项目最近的进展和卡点", "Recent progress and blockers for each project"),
+    tr("paperfacts 最近两周做了哪些功能", "What features did paperfacts get in the last two weeks?"),
+    tr("哪些项目我花了时间但没有提交", "Which projects did I spend time on without committing?")],
+  reports: [tr("把上周的周报压缩成三句话", "Condense last week's weekly report into three sentences"),
+    tr("日报里反复出现的待办有哪些", "Which to-dos keep recurring in the daily reports?"),
+    tr("对比这周和上周的日报", "Compare this week's daily reports with last week's")],
+} as Record<string, string[]>)[tab] ?? suggest("today");
 
-const TAB_NAME: Record<string, string> = { today: "今日", analytics: "分析", sessions: "会话", projects: "项目", reports: "日报" };
+const tabName = (tab: string): string => ({
+  today: tr("今日", "Today"), analytics: tr("分析", "Analytics"), sessions: tr("会话", "Sessions"),
+  projects: tr("项目", "Projects"), reports: tr("日报", "Reports"),
+} as Record<string, string>)[tab] ?? tab;
 
 DOMPurify.addHook("afterSanitizeAttributes", (n) => {
   if (n.tagName === "A" && /^https?:/.test(n.getAttribute("href") || "")) {
@@ -77,7 +92,7 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
 
   usePageCtx();
   useEffect(() => {
-    setChatContext({ tab: TAB_NAME[tab] ?? tab, day, ...(tab === "sessions" ? {} : { session_id: null }) });
+    setChatContext({ tab: tabName(tab), day, ...(tab === "sessions" ? {} : { session_id: null }) });
   }, [tab, day]);
 
   useEffect(() => save("chat.open", open), [open]);
@@ -131,7 +146,7 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ac.signal,
         body: JSON.stringify({ text, thread_id: tid, context: { ...pageCtx } }),
       });
-      if (!r.ok || !r.body) throw new Error(r.status === 503 ? "LLM 未配置(需要 ~/.config/ai-work-journal/.env 里的百炼 key)" : `HTTP ${r.status}`);
+      if (!r.ok || !r.body) throw new Error(r.status === 503 ? tr("LLM 未配置(需要 ~/.config/ai-work-journal/.env 里的百炼 key)", "LLM not configured (needs a Bailian key in ~/.config/ai-work-journal/.env)") : `HTTP ${r.status}`);
       const reader = r.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -155,7 +170,7 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
       }
     } catch (e) {
       if ((e as Error).name !== "AbortError") patchLast((t) => ({ ...t, error: String((e as Error).message || e) }));
-      else patchLast((t) => ({ ...t, error: "已停止" }));
+      else patchLast((t) => ({ ...t, error: tr("已停止", "Stopped") }));
     } finally {
       setBusy(false);
       abort.current = null;
@@ -183,31 +198,31 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
 
   if (!open) {
     return (
-      <button className="chat-fab" onClick={() => setOpen(true)} title="问 AI (Ctrl/⌘ + J)">
-        <Spark /> 问 AI <kbd>⌘J</kbd>
+      <button className="chat-fab" onClick={() => setOpen(true)} title={tr("问 AI (Ctrl/⌘ + J)", "Ask AI (Ctrl/⌘ + J)")}>
+        <Spark /> {tr("问 AI", "Ask AI")} <kbd>⌘J</kbd>
       </button>
     );
   }
 
   return (
-    <section className={`chat-panel ${wide ? "wide" : ""}`} aria-label="问 AI">
+    <section className={`chat-panel ${wide ? "wide" : ""}`} aria-label={tr("问 AI", "Ask AI")}>
       <header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-neutral-200 px-3">
         <Spark />
-        <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-neutral-800">{title || "问 AI"}</div>
-        <button className="chat-icon" title="历史对话" onClick={() => setShowHist((v) => !v)}>历史</button>
-        <button className="chat-icon" title="新对话" onClick={newChat} disabled={busy}>新对话</button>
-        <button className="chat-icon" title={wide ? "收窄" : "加宽"} onClick={() => setWide((w) => !w)}>{wide ? "⇥" : "⇤"}</button>
-        <button className="chat-icon" title="关闭 (⌘J)" onClick={() => setOpen(false)}>✕</button>
+        <div className="min-w-0 flex-1 truncate text-[13px] font-semibold text-neutral-800">{title || tr("问 AI", "Ask AI")}</div>
+        <button className="chat-icon" title={tr("历史对话", "History")} onClick={() => setShowHist((v) => !v)}>{tr("历史", "History")}</button>
+        <button className="chat-icon" title={tr("新对话", "New chat")} onClick={newChat} disabled={busy}>{tr("新对话", "New chat")}</button>
+        <button className="chat-icon" title={wide ? tr("收窄", "Narrow") : tr("加宽", "Widen")} onClick={() => setWide((w) => !w)}>{wide ? "⇥" : "⇤"}</button>
+        <button className="chat-icon" title={tr("关闭 (⌘J)", "Close (⌘J)")} onClick={() => setOpen(false)}>✕</button>
       </header>
 
       {showHist && (
         <div className="chat-hist">
-          {threads.length === 0 && <div className="px-3 py-4 text-[12px] text-neutral-400">还没有对话</div>}
+          {threads.length === 0 && <div className="px-3 py-4 text-[12px] text-neutral-400">{tr("还没有对话", "No conversations yet")}</div>}
           {threads.map((t) => (
             <div key={t.id} className={`chat-hist-row ${t.id === tid ? "on" : ""}`}>
-              <button className="min-w-0 flex-1 truncate text-left" onClick={() => pick(t.id)}>{t.title || "(无标题)"}</button>
+              <button className="min-w-0 flex-1 truncate text-left" onClick={() => pick(t.id)}>{t.title || tr("(无标题)", "(untitled)")}</button>
               <span className="shrink-0 text-[11px] text-neutral-400">{new Date(t.updated_at).toLocaleDateString("sv").slice(5)}</span>
-              <button className="chat-del" title="删除" onClick={() => remove(t.id)}>✕</button>
+              <button className="chat-del" title={tr("删除", "Delete")} onClick={() => remove(t.id)}>✕</button>
             </div>
           ))}
         </div>
@@ -225,7 +240,7 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
 
       <form className="chat-input" onSubmit={(e) => { e.preventDefault(); send(input); }}>
         <textarea ref={box} value={input} rows={Math.min(6, Math.max(1, input.split("\n").length))}
-          placeholder={status && !status.available ? "LLM 未配置" : "问关于你工作的任何事…  Enter 发送,Shift+Enter 换行"}
+          placeholder={status && !status.available ? tr("LLM 未配置", "LLM not configured") : tr("问关于你工作的任何事…  Enter 发送,Shift+Enter 换行", "Ask anything about your work…  Enter to send, Shift+Enter for newline")}
           disabled={status ? !status.available : false}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -233,11 +248,11 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
             if (e.key === "Escape") setOpen(false);
           }} />
         {busy
-          ? <button type="button" className="chat-send stop" onClick={() => abort.current?.abort()} title="停止">■</button>
-          : <button type="submit" className="chat-send" disabled={!input.trim()} title="发送">↑</button>}
+          ? <button type="button" className="chat-send stop" onClick={() => abort.current?.abort()} title={tr("停止", "Stop")}>■</button>
+          : <button type="submit" className="chat-send" disabled={!input.trim()} title={tr("发送", "Send")}>↑</button>}
       </form>
       <div className="chat-foot">
-        {pageCtx.tab && <span>上下文:{pageCtx.tab} · {pageCtx.day}{pageCtx.session_id ? ` · 会话 #${pageCtx.session_id}` : ""}</span>}
+        {pageCtx.tab && <span>{tr("上下文:", "Context: ")}{pageCtx.tab} · {pageCtx.day}{pageCtx.session_id ? ` · ${tr("会话", "session")} #${pageCtx.session_id}` : ""}</span>}
         {status?.model && <span className="ml-auto">{status.model}</span>}
       </div>
     </section>
@@ -247,16 +262,17 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
 function Empty({ status, tab, onPick }: { status: { available: boolean } | null; tab: string; onPick: (q: string) => void }) {
   if (status && !status.available) {
     return <div className="px-2 py-10 text-center text-[12.5px] leading-relaxed text-neutral-500">
-      LLM 未配置。在 <code>~/.config/ai-work-journal/.env</code> 写入 BAILIAN_API_KEY / BAILIAN_BASE_URL 后重启看板。</div>;
+      {tr("LLM 未配置。在 ", "LLM not configured. Add BAILIAN_API_KEY / BAILIAN_BASE_URL to ")}<code>~/.config/ai-work-journal/.env</code>{tr(" 写入 BAILIAN_API_KEY / BAILIAN_BASE_URL 后重启看板。", " and restart the dashboard.")}</div>;
   }
   return (
     <div className="px-1 pt-6">
-      <div className="text-[15px] font-semibold text-neutral-800">问问你自己的工作</div>
+      <div className="text-[15px] font-semibold text-neutral-800">{tr("问问你自己的工作", "Ask about your own work")}</div>
       <p className="mt-1.5 text-[12.5px] leading-relaxed text-neutral-500">
-        我能查到你的窗口记录、agent 会话原文、git 提交、项目设定、屏幕 OCR、飞书摘录和日报。先看概要,需要时再读原文。
+        {tr("我能查到你的窗口记录、agent 会话原文、git 提交、项目设定、屏幕 OCR、飞书摘录和日报。先看概要,需要时再读原文。",
+          "I can look up your window log, agent session transcripts, git commits, project settings, screen OCR, Feishu excerpts and reports. I start with summaries and read the full text when needed.")}
       </p>
       <div className="mt-4 flex flex-col gap-1.5">
-        {(SUGGEST[tab] ?? SUGGEST.today).map((q) => (
+        {suggest(tab).map((q) => (
           <button key={q} className="chat-suggest" onClick={() => onPick(q)}>{q}</button>
         ))}
       </div>
@@ -276,13 +292,13 @@ function TurnView({ t, live, onRetry }: { t: Turn; live: boolean; onRetry: () =>
       {t.answer && <div className={`md chat-md ${live ? "live" : ""}`} dangerouslySetInnerHTML={{ __html: html }} />}
       {t.error && (
         <div className="mt-2 flex items-center gap-2 text-[12px] text-red-600">
-          <span>{t.error === "已停止" ? "已停止" : `出错:${t.error}`}</span>
-          {!live && <button className="link" onClick={onRetry}>重试</button>}
+          <span>{t.error === tr("已停止", "Stopped") ? tr("已停止", "Stopped") : `${tr("出错:", "Error: ")}${t.error}`}</span>
+          {!live && <button className="link" onClick={onRetry}>{tr("重试", "Retry")}</button>}
         </div>
       )}
       {!live && t.answer && (
         <button className="chat-copy" onClick={() => { navigator.clipboard?.writeText(t.answer).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }); }}>
-          {copied ? "已复制" : "复制"}
+          {copied ? tr("已复制", "Copied") : tr("复制", "Copy")}
         </button>
       )}
     </div>
@@ -297,15 +313,15 @@ function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
     <div className="chat-steps">
       <button className="chat-steps-head" onClick={() => setOpen((o) => !o)}>
         <span className={`chat-caret ${show ? "open" : ""}`}>▸</span>
-        {live && steps.some((s) => !s.done) ? "正在查询…" : `查了 ${n} 处数据`}
-        {!show && <span className="truncate text-neutral-400"> · {[...new Set(steps.map((s) => TOOL_LABEL[s.name] ?? s.name))].join("、")}</span>}
+        {live && steps.some((s) => !s.done) ? tr("正在查询…", "Querying…") : tr(`查了 ${n} 处数据`, `Checked ${n} data source${n === 1 ? "" : "s"}`)}
+        {!show && <span className="truncate text-neutral-400"> · {[...new Set(steps.map((s) => toolLabel(s.name)))].join(tr("、", ", "))}</span>}
       </button>
       {show && steps.map((s) => (
         <div key={s.id} className="chat-step">
           <span className={`chat-dot ${s.done ? (s.error ? "err" : "ok") : "run"}`} />
-          <span className="font-medium text-neutral-700">{TOOL_LABEL[s.name] ?? s.name}</span>
+          <span className="font-medium text-neutral-700">{toolLabel(s.name)}</span>
           <span className="truncate text-neutral-400">{argText(s.args)}</span>
-          <span className={`ml-auto shrink-0 ${s.error ? "text-red-500" : "text-neutral-500"}`}>{s.error ? "出错" : s.summary ?? ""}</span>
+          <span className={`ml-auto shrink-0 ${s.error ? "text-red-500" : "text-neutral-500"}`}>{s.error ? tr("出错", "Error") : s.summary ?? ""}</span>
         </div>
       ))}
     </div>

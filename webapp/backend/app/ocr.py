@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 
+from .i18n import tr
 from . import config
 
 API_ENGINES = ("openai", "http")
@@ -75,12 +76,12 @@ def configured() -> tuple[bool, str]:
     if e == "openai":
         base, key, _ = _openai_target()
         if not base:
-            return False, "ocr.openai.base_url 未设置(或环境变量 OCR_BASE_URL)"
+            return False, tr("ocr.openai.base_url 未设置(或环境变量 OCR_BASE_URL)", "ocr.openai.base_url is not set (or OCR_BASE_URL)")
         if not key and "localhost" not in base and "127.0.0.1" not in base:
-            return False, "缺少 OCR_API_KEY(环境变量或 .env)"
+            return False, tr("缺少 OCR_API_KEY(环境变量或 .env)", "OCR_API_KEY is missing (environment or .env)")
         return True, ""
     if e == "http":
-        return (True, "") if config.OCR.get("http", {}).get("url") else (False, "ocr.http.url 未设置")
+        return (True, "") if config.OCR.get("http", {}).get("url") else (False, tr("ocr.http.url 未设置", "ocr.http.url is not set"))
     return e in ("screenpipe", "none"), ""
 
 

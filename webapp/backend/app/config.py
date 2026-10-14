@@ -35,6 +35,8 @@ SP_TOKEN_FILE = _repo_cfg.get("sp_token_file", "")
 # service the 截屏 restart button restarts: systemd --user unit (Linux), launchd
 # label (macOS) or scheduled-task name (Windows); empty = no button
 SP_SERVICE = _repo_cfg.get("sp_service", "")
+DATA_DIR = REPO_ROOT / "data"          # collected daily JSON, feishu map
+REPORTS_DIR = REPO_ROOT / "reports"    # generated daily/weekly Markdown
 SP_DATA_DIR = Path(_repo_cfg.get("sp_data_dir") or Path.home() / ".screenpipe" / "data")
 
 # LLM (pi headless) — explicit opt-out possible; journal pipeline already uses it
@@ -107,6 +109,7 @@ DEMO_DIR = os.environ.get("JOURNAL_DEMO")
 if DEMO_DIR:
     _demo = Path(DEMO_DIR)
     DB_PATH = _demo / "demo.db"
+    DATA_DIR, REPORTS_DIR = _demo / "data", _demo / "reports"
     AW_URL, SP_URL, SP_SERVICE = "http://127.0.0.1:9", "", ""
     PI_SESSIONS_DIR, CLAUDE_SESSIONS_DIR = str(_demo / "pi"), str(_demo / "claude")
     PROJECT_ROOTS = [str(_demo / "projects")]

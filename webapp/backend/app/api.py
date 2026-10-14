@@ -10,11 +10,19 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import analytics, capture, chat, config, ocr, reports, db, ingest, llm_classify, timeline, projects, reviews
+from . import analytics, capture, chat, config, i18n, ocr, reports, db, ingest, llm_classify, timeline, projects, reviews
 from .adapters import sessions as sessions_mod
+from .i18n import label, tr
 from .timeutil import day_bounds, local_day_key, now_utc, parse_ts, tz
 
 app = FastAPI(title="ai-work-journal dashboard", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def _lang(request: Request, call_next):
+    """Generated text follows the dashboard's 中/EN toggle (the `lang` cookie)."""
+    i18n.set_lang(request.cookies.get("lang") or "zh")
+    return await call_next(request)
 
 _STATE = {"revision": 0, "subscribers": [], "lock": threading.Lock()}
 
@@ -167,15 +175,15 @@ def get_today(day: str):
     }
     m = t["metrics"]
     kpis = [
-        {"key": "human_active", "label": "人类活跃时长",
+        {"key": "human_active", "label": tr("人类活跃时长", "Human active"),
          "value": round(m["human_active_sec"] / 60), "unit": "min",
          "state": "measured" if m["human_active_sec"] else "none"},
-        {"key": "agent_exec", "label": "Agent 执行时长",
+        {"key": "agent_exec", "label": tr("Agent 执行时长", "Agent execution"),
          "value": round(m.get("agent_exec_sec", 0) / 60), "unit": "min",
-         "note": f"生命周期总和 {round(m['agent_runtime_sec'] / 60)} min", "state": "measured"},
-        {"key": "project_coverage", "label": "可归属项目比例",
+         "note": tr("生命周期总和", "lifetime total") + f" {round(m['agent_runtime_sec'] / 60)} min", "state": "measured"},
+        {"key": "project_coverage", "label": tr("可归属项目比例", "Attributed to projects"),
          "value": None, "state": "n/a"},
-        {"key": "unknown", "label": "未知区间",
+        {"key": "unknown", "label": tr("未知区间", "Unknown time"),
          "value": round(m["unknown_sec"] / 60), "unit": "min",
          "state": "measured" if t["has_observation"] else "no_observation"},
     ]
@@ -240,10 +248,10 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
         best = max(segs, key=lambda x: (x[1] - x[0]).total_seconds())
         dur = (best[1] - best[0]).total_seconds()
         if dur >= 15 * 60:
-            out.append({"kind": "focus", "title": f"最长专注 {_hm(dur)} · {best[2]}",
+            out.append({"kind": "focus", "title": tr(f"最长专注 {_hm(dur)} · {best[2]}", f"Longest focus {_hm(dur)} · {label(best[2])}"),
                         "detail": f"{best[0].astimezone().strftime('%H:%M')}–"
-                                   f"{best[1].astimezone().strftime('%H:%M')},"
-                                   f"其间 {best[3]} 次窗口切换"})
+                                   f"{best[1].astimezone().strftime('%H:%M')}"
+                                   + tr(f",其间 {best[3]} 次窗口切换", f", {best[3]} window switch" + ("es" if best[3] != 1 else ""))})
     # 2. human vs agent-execution overlap
     if m["human_active_sec"] > 0 and m.get("agent_exec_sec", 0) > 0:
         hun = _ivs(t["blocks"])
@@ -251,13 +259,13 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
         ov = _overlap_sec(hun, exn)
         ratio = ov / m["agent_exec_sec"]
         if ratio >= 0.6:
-            out.append({"kind": "overlap", "title": f"Agent 执行与人在线重叠 {round(ratio * 100)}%",
-                        "detail": f"执行总 {_hm(m['agent_exec_sec'])},其中 {_hm(ov)} "
-                                   f"发生在你前台活跃时"})
+            out.append({"kind": "overlap", "title": tr(f"Agent 执行与人在线重叠 {round(ratio * 100)}%", f"Agents ran while you were active {round(ratio * 100)}% of the time"),
+                        "detail": tr(f"执行总 {_hm(m['agent_exec_sec'])},其中 {_hm(ov)} 发生在你前台活跃时",
+                                     f"{_hm(ov)} of {_hm(m['agent_exec_sec'])} execution overlapped your activity")})
         else:
-            out.append({"kind": "overlap", "title": f"Agent 多数执行无人值守(重叠 {round(ratio * 100)}%)",
-                        "detail": f"执行 {_hm(m['agent_exec_sec'])} 中仅 {_hm(ov)} 与前台活跃重叠,"
-                                   f"其余为后台/自动运行"})
+            out.append({"kind": "overlap", "title": tr(f"Agent 多数执行无人值守(重叠 {round(ratio * 100)}%)", f"Agents mostly ran unattended ({round(ratio * 100)}% overlap)"),
+                        "detail": tr(f"执行 {_hm(m['agent_exec_sec'])} 中仅 {_hm(ov)} 与前台活跃重叠,其余为后台/自动运行",
+                                     f"Only {_hm(ov)} of {_hm(m['agent_exec_sec'])} overlapped your activity; the rest ran in the background")})
     # 3. overnight execution
     early_sec = 0
     for a in t["agent"]:
@@ -266,40 +274,40 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
             if s0.hour < 8:
                 early_sec += (parse_ts(iv["end"]) - parse_ts(iv["start"])).total_seconds()
     if early_sec > 20 * 60:
-        out.append({"kind": "night", "title": f"凌晨自动执行 {_hm(early_sec)}",
-                    "detail": "08:00 前的 Agent 执行段,多为长任务/定时任务"})
+        out.append({"kind": "night", "title": tr(f"凌晨自动执行 {_hm(early_sec)}", f"{_hm(early_sec)} of overnight execution"),
+                    "detail": tr("08:00 前的 Agent 执行段,多为长任务/定时任务", "Agent runs before 08:00, mostly long or scheduled jobs")})
     # 4. biggest unknown gap
     if t["unknown"]:
         big = max(t["unknown"], key=lambda iv: (parse_ts(iv["end"]) - parse_ts(iv["start"])).total_seconds())
         d = (parse_ts(big["end"]) - parse_ts(big["start"])).total_seconds()
         if d > 5 * 60:
-            out.append({"kind": "unknown", "title": f"观察缺口 {_hm(d)}",
+            out.append({"kind": "unknown", "title": tr(f"观察缺口 {_hm(d)}", f"Observation gap {_hm(d)}"),
                         "detail": f"{parse_ts(big['start']).astimezone().strftime('%H:%M')}–"
                                    f"{parse_ts(big['end']).astimezone().strftime('%H:%M')} "
-                                   f"无窗口数据,可在时间轴上标注"})
+                                   + tr("无窗口数据,可在时间轴上标注", "no window data; you can label it on the timeline")})
     # 5. projects
     top = sorted(alloc.items(), key=lambda x: -x[1])[:2]
     if top and sum(alloc.values()) > 0:
         total = sum(alloc.values())
-        t0 = f"{top[0][0]} {_hm(top[0][1])}({round(top[0][1] / total * 100)}%)"
-        t1 = f", {top[1][0]} {_hm(top[1][1])}({round(top[1][1] / total * 100)}%)" if len(top) > 1 else ""
-        out.append({"kind": "projects", "title": f"投入首位 {top[0][0]}",
+        t0 = f"{label(top[0][0])} {_hm(top[0][1])} ({round(top[0][1] / total * 100)}%)"
+        t1 = tr(",", ", ") + f"{label(top[1][0])} {_hm(top[1][1])} ({round(top[1][1] / total * 100)}%)" if len(top) > 1 else ""
+        out.append({"kind": "projects", "title": tr(f"投入首位 {top[0][0]}", f"Most time: {label(top[0][0])}"),
                     "detail": f"{t0}{t1}"})
     # 6. outcomes
     if commits:
         repos = {}
         for c in commits:
             repos[c["repo"]] = repos.get(c["repo"], 0) + 1
-        rs = "、".join(f"{k}×{v}" for k, v in sorted(repos.items(), key=lambda x: -x[1]))
-        out.append({"kind": "outcomes", "title": f"{len(commits)} 个提交",
+        rs = tr("、", ", ").join(f"{k}×{v}" for k, v in sorted(repos.items(), key=lambda x: -x[1]))
+        out.append({"kind": "outcomes", "title": tr(f"{len(commits)} 个提交", f"{len(commits)} commit" + ("s" if len(commits) != 1 else "")),
                     "detail": rs})
     # 7. manual overrides active
     n_ov = db.q1("SELECT COUNT(*) AS n FROM manual_overrides WHERE day_key=? "
                  "AND field IN ('project','activity_type','end') AND superseded_by IS NULL",
                  (day,))["n"]
     if n_ov:
-        out.append({"kind": "corrections", "title": f"{n_ov} 条人工修正生效中",
-                    "detail": "重采集与重新分析不会覆盖;可在详情面板撤销"})
+        out.append({"kind": "corrections", "title": tr(f"{n_ov} 条人工修正生效中", f"{n_ov} manual correction" + ("s" if n_ov != 1 else "") + " in effect"),
+                    "detail": tr("重采集与重新分析不会覆盖;可在详情面板撤销", "Kept across re-sync and re-analysis; undo in the detail panel")})
     return out[:7]
 
 
@@ -844,10 +852,12 @@ def chat_thread_delete(tid: int):
 def chat_ask(body: ChatIn):
     """NDJSON stream: thread · step/step_done (tool calls) · delta (answer text) · done | error."""
     if not chat.available():
-        raise HTTPException(503, "LLM 未配置")
+        raise HTTPException(503, tr("LLM 未配置", "LLM not configured"))
+
+    lang = i18n.lang()   # the stream runs outside this request's context
 
     def gen():
-        for ev in chat.ask(body.text, body.thread_id, body.context):
+        for ev in chat.ask(body.text, body.thread_id, body.context, lang=lang):
             yield json.dumps(ev, ensure_ascii=False) + "\n"
     return StreamingResponse(gen(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})

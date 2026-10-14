@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fmtDur, fmtHM, isCategory, projectColor } from "./api";
 import type { AgentLane, Episode, Interval, Timeline } from "./api";
+import { tr, label, reason } from "./i18n";
 import { durS, endM, hm, hms, laneM, placeOf, startM, t2m, type Visit } from "./visits";
 
 export { t2m, hm, laneM, startM, endM };
@@ -27,7 +28,7 @@ export type Selection =
 
 export const episodeKey = (e: Episode) => `${e.start}|${e.label}`;
 export function episodeTitle(e: Episode): string {
-  return e.is_category || !e.activity ? e.label : `${e.label} · ${e.activity}`;
+  return e.is_category || !e.activity ? label(e.label) : `${label(e.label)} · ${label(e.activity)}`;
 }
 
 const LABEL_W = 168;
@@ -102,7 +103,7 @@ function buildLanes(tl: Timeline, visits: Visit[], minor: Set<string>): Lane[] {
     const exec = sweep(sessions.flatMap((s) => s.segments.map((g) =>
       [laneM(g.start, day, "start"), laneM(g.end, day, "end")] as [number, number])));
     return {
-      key: k, label: k === OTHER ? "其他活动" : k === "Unassigned" ? "未归属" : k,
+      key: k, label: k === OTHER ? label("其他活动") : k === "Unassigned" ? tr("未归属", "Unassigned") : k,
       humanMin: human.get(k) ?? 0, sessions, exec,
       execMin: exec.reduce((s, [a, b]) => s + (b - a), 0),
     };
@@ -324,7 +325,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
 
   const selEp = selection?.kind === "episode" ? selection.key : "";
   const selSession = selection?.kind === "session" ? selection.session.id : -1;
-  const presets: [number, string][] = [[10, "10 分"], [30, "30 分"], [120, "2 时"]];
+  const presets: [number, string][] = [[10, tr("10 分", "10 min")], [30, tr("30 分", "30 min")], [120, tr("2 时", "2 h")]];
   const drawLinks = showLinks && ppm >= 4;
   const ordered = useMemo(() => visits.filter((v) => inView(v.s, v.e)), [visits, a, b]); // eslint-disable-line
 
@@ -333,25 +334,25 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
       {/* toolbar */}
       <div className="tl2-bar">
         <div className="seg">
-          <button className={Math.abs(a - extent[0]) < 1 && Math.abs(b - extent[1]) < 1 ? "on" : ""} onClick={() => onView(extent)}>全天</button>
+          <button className={Math.abs(a - extent[0]) < 1 && Math.abs(b - extent[1]) < 1 ? "on" : ""} onClick={() => onView(extent)}>{tr("全天", "All day")}</button>
           {(workday[0] !== extent[0] || workday[1] !== extent[1]) && (
-            <button className={Math.abs(a - workday[0]) < 1 && Math.abs(b - workday[1]) < 1 ? "on" : ""} onClick={() => onView(workday)}>工作时段</button>
+            <button className={Math.abs(a - workday[0]) < 1 && Math.abs(b - workday[1]) < 1 ? "on" : ""} onClick={() => onView(workday)}>{tr("工作时段", "Work hours")}</button>
           )}
           {presets.map(([m, l]) => (
             <button key={m} className={Math.abs(span - m) < 0.5 ? "on" : ""} onClick={() => setSpan(m)}>{l}</button>
           ))}
         </div>
         <div className="flex items-center gap-1">
-          <button className="icon-btn" title="往前 (←)" onClick={() => onView(clamp([a - span * 0.3, b - span * 0.3]))}>‹</button>
+          <button className="icon-btn" title={tr("往前 (←)", "Back (←)")} onClick={() => onView(clamp([a - span * 0.3, b - span * 0.3]))}>‹</button>
           <span className="w-[100px] text-center text-[12.5px] font-medium tabular-nums text-neutral-700">{hm(a)}–{hm(b)}</span>
-          <button className="icon-btn" title="往后 (→)" onClick={() => onView(clamp([a + span * 0.3, b + span * 0.3]))}>›</button>
-          <button className="icon-btn ml-1" title="缩小 (−)" onClick={() => zoomAt((a + b) / 2, 1.5)}>−</button>
-          <button className="icon-btn" title="放大 (+)" onClick={() => zoomAt((a + b) / 2, 0.66)}>+</button>
+          <button className="icon-btn" title={tr("往后 (→)", "Forward (→)")} onClick={() => onView(clamp([a + span * 0.3, b + span * 0.3]))}>›</button>
+          <button className="icon-btn ml-1" title={tr("缩小 (−)", "Zoom out (−)")} onClick={() => zoomAt((a + b) / 2, 1.5)}>−</button>
+          <button className="icon-btn" title={tr("放大 (+)", "Zoom in (+)")} onClick={() => zoomAt((a + b) / 2, 0.66)}>+</button>
         </div>
         <label className="tl-check ml-auto text-[12.5px] text-neutral-500">
-          <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />切换连线
+          <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />{tr("切换连线", "Switch links")}
         </label>
-        <span className="hidden text-[11.5px] text-neutral-400 2xl:inline">拖拽平移 · ⌘/Ctrl+滚轮缩放 · 双击放大 · ←/→/+/−/0</span>
+        <span className="hidden text-[11.5px] text-neutral-400 2xl:inline">{tr("拖拽平移 · ⌘/Ctrl+滚轮缩放 · 双击放大 · ←/→/+/−/0", "Drag to pan · ⌘/Ctrl+wheel to zoom · double-click to zoom in · ←/→/+/−/0")}</span>
       </div>
 
       {/* readout */}
@@ -360,33 +361,33 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
           <span className="font-semibold tabular-nums text-neutral-900">{hms(cursor!)}</span>
           {readout.cur ? (<>
             <span className="tl2-chip" style={{ background: isCategory(readout.cur.project) ? "#71717a" : projectColor(readout.cur.project) }}>
-              {readout.cur.project}
+              {label(readout.cur.project)}
             </span>
             <span className="shrink-0 text-neutral-500">{readout.cur.appLabel}</span>
             <span className="min-w-0 truncate text-neutral-800">{placeOf(readout.cur)}</span>
-            <span className="shrink-0 text-neutral-400">已停留 {durS(cursor! - readout.cur.s)} / {durS(readout.cur.e - readout.cur.s)}</span>
-            {readout.cur.reason && <span className="shrink-0 rounded bg-white px-1.5 text-[11.5px] text-neutral-400 ring-1 ring-neutral-200" title="为什么归到这里">{readout.cur.reason}</span>}
-          </>) : <span className="text-neutral-400">{readout.away ? "离开电脑" : "无前台窗口"}</span>}
+            <span className="shrink-0 text-neutral-400">{tr("已停留", "Stayed")} {durS(cursor! - readout.cur.s)} / {durS(readout.cur.e - readout.cur.s)}</span>
+            {readout.cur.reason && <span className="shrink-0 rounded bg-white px-1.5 text-[11.5px] text-neutral-400 ring-1 ring-neutral-200" title={tr("为什么归到这里", "Why it was filed here")}>{reason(readout.cur.reason)}</span>}
+          </>) : <span className="text-neutral-400">{readout.away ? tr("离开电脑", "Away from computer") : tr("无前台窗口", "No foreground window")}</span>}
           <span className="ml-auto flex shrink-0 items-center gap-3">
             {readout.prev && (
               <span className="max-w-[300px] truncate text-neutral-400">
-                ← {hms(readout.prev.e)} 从 {readout.prev.appLabel} · {placeOf(readout.prev).slice(0, 26)}
+                ← {hms(readout.prev.e)} {tr("从", "from")} {readout.prev.appLabel} · {placeOf(readout.prev).slice(0, 26)}
               </span>
             )}
             {readout.running.length > 0 && (
               <span className="rounded-md bg-neutral-100 px-1.5 text-neutral-600">
-                {readout.running.length} agent 执行中 · {[...new Set(readout.running.map((s) => s.project))].join(" / ")}
+                {tr(`${readout.running.length} agent 执行中`, `${readout.running.length} agent${readout.running.length === 1 ? "" : "s"} running`)} · {[...new Set(readout.running.map((s) => label(s.project)))].join(" / ")}
               </span>
             )}
           </span>
         </>) : (
-          <span className="text-neutral-400">把鼠标放到时间轴上,读出那一秒你在哪个窗口、停留多久、从哪跳来、哪些 agent 在跑。</span>
+          <span className="text-neutral-400">{tr("把鼠标放到时间轴上,读出那一秒你在哪个窗口、停留多久、从哪跳来、哪些 agent 在跑。", "Hover the timeline to see which window you were in at that second, how long you stayed, where you came from and which agents were running.")}</span>
         )}
       </div>
 
       {!tl.has_observation && (
         <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-700">
-          该日没有前台窗口观察(ActivityWatch),只显示 Agent 执行与证据。
+          {tr("该日没有前台窗口观察(ActivityWatch),只显示 Agent 执行与证据。", "No foreground window observation (ActivityWatch) this day; only agent runs and evidence are shown.")}
         </div>
       )}
 
@@ -417,7 +418,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
 
         {/* minimap */}
         <div className="tl-row tl2-mini-row">
-          <div className="tl-lab"><small>全天</small></div>
+          <div className="tl-lab"><small>{tr("全天", "All day")}</small></div>
           <div className="tl-track tl2-mini"
             onPointerDown={(e) => {
               e.stopPropagation();
@@ -443,8 +444,8 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
               <div key={i} className="tl2-mini-a" style={{ left: mx(s), width: Math.max(0.6, mx(e) - mx(s)) }} />
             ))}
             <div className={`tl2-mini-view ${resizing ? "resizing" : ""}`} style={{ left: mx(a), width: Math.max(10, mx(b) - mx(a)) }}>
-              <span className="tl2-mini-h l" data-edge="l" title="拖动调整开始时间" />
-              <span className="tl2-mini-h r" data-edge="r" title="拖动调整结束时间" />
+              <span className="tl2-mini-h l" data-edge="l" title={tr("拖动调整开始时间", "Drag to adjust start time")} />
+              <span className="tl2-mini-h r" data-edge="r" title={tr("拖动调整结束时间", "Drag to adjust end time")} />
             </div>
           </div>
         </div>
@@ -470,12 +471,12 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
           {/* chapters: episodes + unknown gaps */}
           {tl.has_observation && (
             <div className="tl-row tl2-chapters">
-              <div className="tl-lab"><b>工作段</b></div>
+              <div className="tl-lab"><b>{tr("工作段", "Work blocks")}</b></div>
               <div className="tl-track">
                 {tl.unknown.filter((u) => endM(u.end, day) - startM(u.start, day) >= 2).map((u, i) => {
                   const s = startM(u.start, day), e = endM(u.end, day);
                   return inView(s, e) && (
-                    <div key={`u${i}`} className="tl2-unk" style={{ left: x(s), width: Math.max(3, w(s, e)) }} title={`未知 ${hm(s)}–${hm(e)} · 点击标注`}
+                    <div key={`u${i}`} className="tl2-unk" style={{ left: x(s), width: Math.max(3, w(s, e)) }} title={tr(`未知 ${hm(s)}–${hm(e)} · 点击标注`, `Unknown ${hm(s)}–${hm(e)} · click to label`)}
                       onClick={(ev) => { ev.stopPropagation(); if (!drag.current?.moved) onSelect({ kind: "unknown", interval: u }); }} />
                   );
                 })}
@@ -499,8 +500,8 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
           {/* overview: everything on one lane */}
           <div className="tl2-lane tl2-ov" style={{ position: "relative", height: ovH }}>
             <div className="tl2-lab" style={{ height: ovH }}>
-              <span className="flex items-center gap-1.5"><b>全部</b></span>
-              <small>你 {fmtDur(tl.metrics.human_active_sec)}{tl.agent.length ? ` · agent ${fmtDur(tl.metrics.agent_exec_union_sec)}` : ""}</small>
+              <span className="flex items-center gap-1.5"><b>{tr("全部", "All")}</b></span>
+              <small>{tr("你", "You")} {fmtDur(tl.metrics.human_active_sec)}{tl.agent.length ? ` · agent ${fmtDur(tl.metrics.agent_exec_union_sec)}` : ""}</small>
             </div>
             <div className="tl2-track" style={{ left: LABEL_W, width: W }}>
               <div className="tl2-hbg" style={{ top: 0, height: HUMAN_H }} />
@@ -514,7 +515,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                 const ww = w(r.s, r.e), other = r.key === OTHER;
                 const col = other ? "#c9ccd3" : projectColor(r.key);
                 const one = r.n === 1 && r.lead;
-                const name = other ? (r.lead?.project ?? "其他活动") : r.key;
+                const name = other ? (label(r.lead?.project ?? "其他活动")) : r.key;
                 const hot = r.lead != null && r.lead.i === hoverVisit;
                 return (
                   <div key={k} className={`tl2-ovr ${other ? "cat" : ""} ${hot ? "hot" : ""}`}
@@ -542,20 +543,20 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                 return ls.flatMap((l) => l.exec.filter(([s0, e0]) => e0 > a && s0 < b).map(([s0, e0, c], k) => (
                   <div key={`${key}${l.key}${k}`} className="tl2-ova"
                     style={{ left: x(s0), width: Math.max(1.5, w(s0, e0)), top: HUMAN_H + 8 + ri * OV_ROW, background: col, opacity: Math.min(1, 0.55 + 0.15 * c) }}
-                    title={`${l.label} agent ${hm(s0)}–${hm(e0)}${c > 1 ? ` · ${c} 个并行` : ""}`} />
+                    title={`${l.label} agent ${hm(s0)}–${hm(e0)}${c > 1 ? tr(` · ${c} 个并行`, ` · ${c} parallel`) : ""}`} />
                 )));
               })}
               {tl.evidence.filter((ev) => ev.kind === "agent_user").map((p) => {
                 const m = t2m(p.at);
                 return m >= a && m <= b && (
                   <div key={p.id} className="tl2-pr" style={{ left: x(m), top: HUMAN_H + 1, borderBottomColor: projectColor(p.project ?? "Unassigned") }}
-                    title={`${p.at.slice(11, 19)} 你 → ${p.project ?? ""} agent\n${p.label}`} />
+                    title={`${p.at.slice(11, 19)} ${tr("你", "You")} → ${label(p.project ?? "")} agent\n${p.label}`} />
                 );
               })}
               {tl.evidence.filter((ev) => ev.kind === "commit").map((c) => {
                 const m = t2m(c.at);
                 return m >= a && m <= b && (
-                  <div key={c.id} className="tl2-cm" style={{ left: x(m), top: HUMAN_H - 4 }} title={`${c.at.slice(11, 19)} 提交 · ${c.repo}\n${c.label}`} />
+                  <div key={c.id} className="tl2-cm" style={{ left: x(m), top: HUMAN_H - 4 }} title={`${c.at.slice(11, 19)} ${tr("提交", "Commit")} · ${c.repo}\n${c.label}`} />
                 );
               })}
             </div>
@@ -564,8 +565,8 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
           <div className="tl-row">
             <div className="tl-lab" />
             <button className="tl2-toggle" onClick={(e) => { e.stopPropagation(); toggleDetail(); }}>
-              {detail ? "▾ 收起项目泳道" : `▸ 按项目展开 · ${lanes.length} 条泳道`}
-              {!detail && overview.agentRows.length > 0 && <span className="text-neutral-400"> · 总览底部细线 = 各项目的 agent 执行</span>}
+              {detail ? tr("▾ 收起项目泳道", "▾ Collapse project lanes") : tr(`▸ 按项目展开 · ${lanes.length} 条泳道`, `▸ Expand by project · ${lanes.length} ${lanes.length === 1 ? "lane" : "lanes"}`)}
+              {!detail && overview.agentRows.length > 0 && <span className="text-neutral-400">{tr(" · 总览底部细线 = 各项目的 agent 执行", " · thin lines at the bottom of the overview = agent runs per project")}</span>}
             </button>
           </div>
 
@@ -594,7 +595,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                       {l.sessions.length > 0 && <span className="tl-caret">{open ? "▾" : "▸"}</span>}
                     </span>
                     <small>
-                      {l.humanMin > 0 && <>你 {fmtDur(l.humanMin * 60)}</>}
+                      {l.humanMin > 0 && <>{tr("你", "You")} {fmtDur(l.humanMin * 60)}</>}
                       {l.humanMin > 0 && l.sessions.length > 0 && " · "}
                       {l.sessions.length > 0 && <>agent {fmtDur(l.execMin * 60)}</>}
                     </small>
@@ -608,7 +609,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                       const cat = l.key === OTHER;
                       const col = cat ? "#9ca3af" : color;
                       const hot = g.visits.some((v) => v.i === hoverVisit);
-                      const label = cat ? `${lead.project} · ${placeOf(lead)}` : placeOf(lead);
+                      const lbl = cat ? `${label(lead.project)} · ${placeOf(lead)}` : placeOf(lead);
                       return (
                         <div key={k}
                           className={`tl2-st ${single ? "one" : "many"} ${cat ? "cat" : ""} ${hot ? "hot" : ""}`}
@@ -626,8 +627,8 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                           ))}
                           {ww >= 44 && (
                             <span className="lbl">
-                              <span className="t">{label}</span>
-                              {ww >= 110 && <span className="m">{single ? `${lead.appLabel} · ${durS(g.e - g.s)}` : `${durS(g.active)} · ${g.visits.length} 个窗口`}</span>}
+                              <span className="t">{lbl}</span>
+                              {ww >= 110 && <span className="m">{single ? `${lead.appLabel} · ${durS(g.e - g.s)}` : tr(`${durS(g.active)} · ${g.visits.length} 个窗口`, `${durS(g.active)} · ${g.visits.length} ${g.visits.length === 1 ? "window" : "windows"}`)}</span>}
                             </span>
                           )}
                         </div>
@@ -637,20 +638,20 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                       <div className="tl2-arow" style={{ top: L.ay - L.top, height: AGENT_H }}>
                         {l.exec.map(([s, e, c], k) => inView(s, e) && (
                           <div key={k} className="tl2-ex" style={{ left: x(s), width: Math.max(1.5, w(s, e)), background: color, opacity: Math.min(1, 0.35 + 0.18 * c) }}
-                            title={`${l.label} agent ${hm(s)}–${hm(e)} · ${c} 个并行`}>
+                            title={`${l.label} agent ${hm(s)}–${hm(e)} · ${tr(`${c} 个并行`, `${c} parallel`)}`}>
                             {c > 1 && w(s, e) > 22 && <span>×{c}</span>}
                           </div>
                         ))}
                         {tl.evidence.filter((ev) => ev.kind === "agent_user" && (ev.project ?? "Unassigned") === l.key).map((p) => {
                           const m = t2m(p.at);
                           return m >= a && m <= b && (
-                            <div key={p.id} className="tl2-pr" style={{ left: x(m), borderBottomColor: color }} title={`${p.at.slice(11, 19)} 你 → agent\n${p.label}`} />
+                            <div key={p.id} className="tl2-pr" style={{ left: x(m), borderBottomColor: color }} title={`${p.at.slice(11, 19)} ${tr("你", "You")} → agent\n${p.label}`} />
                           );
                         })}
                         {tl.evidence.filter((ev) => ev.kind === "commit" && (ev.project ?? ev.repo) === l.key).map((c) => {
                           const m = t2m(c.at);
                           return m >= a && m <= b && (
-                            <div key={c.id} className="tl2-cm" style={{ left: x(m) }} title={`${c.at.slice(11, 19)} 提交 · ${c.repo}\n${c.label}`} />
+                            <div key={c.id} className="tl2-cm" style={{ left: x(m) }} title={`${c.at.slice(11, 19)} ${tr("提交", "Commit")} · ${c.repo}\n${c.label}`} />
                           );
                         })}
                       </div>
@@ -666,7 +667,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
                             return inView(g0, g1) && (
                               <div key={k} className={`tl2-sx ${selSession === s.id ? "sel" : ""}`}
                                 style={{ left: x(g0), width: Math.max(1.5, w(g0, g1)), background: color }}
-                                title={`${s.agent}${s.subagent ? " 子代理" : ""} #${s.id} · ${hm(g0)}–${hm(g1)}`} />
+                                title={`${s.agent}${s.subagent ? tr(" 子代理", " subagent") : ""} #${s.id} · ${hm(g0)}–${hm(g1)}`} />
                             );
                           })}
                         </div>
@@ -703,9 +704,9 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
       </div>
 
       <div className="tl-legend">
-        <span>总览:色块 = 那段时间你主要在哪个项目(放大后拆成单个窗口);下方细线 = 正在执行的 agent,每个项目一条</span>
-        <span>▲ 你发的 prompt · ◆ 提交</span>
-        <span><i className="away" />离开</span>
+        <span>{tr("总览:色块 = 那段时间你主要在哪个项目(放大后拆成单个窗口);下方细线 = 正在执行的 agent,每个项目一条", "Overview: color blocks = the project you mainly worked on then (zoom in to split into single windows); thin lines below = running agents, one per project")}</span>
+        <span>{tr("▲ 你发的 prompt · ◆ 提交", "▲ your prompt · ◆ commit")}</span>
+        <span><i className="away" />{tr("离开", "Away")}</span>
       </div>
     </div>
   );

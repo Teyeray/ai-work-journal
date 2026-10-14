@@ -4,6 +4,7 @@ import { setChatContext } from "./Chat";
 import { api, fmtDur, fmtHM, projectColor } from "./api";
 import type { SessionRow, SessionDetail, SessionEvent, Review } from "./api";
 import { useSse } from "./sse";
+import { label, locale, reason, tr } from "./i18n";
 
 /**
  * 会话: what each agent session was about and how it went.
@@ -13,9 +14,14 @@ import { useSse } from "./sse";
  *          into chips) and the quality review
  */
 
-const SPANS: [number, string][] = [[1, "当天"], [3, "近 3 天"], [7, "近 7 天"]];
+const spans = (): [number, string][] => [[1, tr("当天", "Day")], [3, tr("近 3 天", "Last 3 days")], [7, tr("近 7 天", "Last 7 days")]];
 const WD = "日一二三四五六";
-const dayHead = (d: string) => `${+d.slice(5, 7)}月${+d.slice(8, 10)}日 周${WD[new Date(d + "T12:00:00").getDay()]}`;
+const dayHead = (d: string) => {
+  const dt = new Date(d + "T12:00:00");
+  return tr(`${+d.slice(5, 7)}月${+d.slice(8, 10)}日 周${WD[dt.getDay()]}`,
+    dt.toLocaleDateString(locale(), { month: "short", day: "numeric", weekday: "short" }));
+};
+const projName = (p: string) => (p === "Unassigned" ? tr("未归属", "Unassigned") : label(p));
 const agentName = (a: string) => (a === "claude-code" ? "claude" : a);
 const tok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 
@@ -89,25 +95,26 @@ export function Sessions({ day, days, focusId }: { day: string; days: string[]; 
     <div className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">会话</h1>
+          <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{tr("会话", "Sessions")}</h1>
           <div className="text-[12.5px] text-neutral-400">
-            {loading ? "加载中…" : `${shown.length} 个会话 · 执行 ${fmtDur(totals.exec)}(累加) · 你发了 ${totals.prompts} 条指令`}
+            {loading ? tr("加载中…", "Loading…") : tr(`${shown.length} 个会话 · 执行 ${fmtDur(totals.exec)}(累加) · 你发了 ${totals.prompts} 条指令`,
+              `${shown.length} ${shown.length === 1 ? "session" : "sessions"} · ${fmtDur(totals.exec)} running (summed) · ${totals.prompts} ${totals.prompts === 1 ? "prompt" : "prompts"} from you`)}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DayPicker value={anchor} days={days} onChange={setAnchor} />
           <div className="seg">
-            {SPANS.map(([n, l]) => <button key={n} className={span === n ? "on" : ""} onClick={() => setSpan(n)}>{l}</button>)}
+            {spans().map(([n, l]) => <button key={n} className={span === n ? "on" : ""} onClick={() => setSpan(n)}>{l}</button>)}
           </div>
           <select value={project} onChange={(e) => pickProject(e.target.value)} className="input h-8 w-[140px] text-[12.5px]">
-            <option value="">全部项目</option>
-            {projects.map((p) => <option key={p} value={p}>{p === "Unassigned" ? "未归属" : p}</option>)}
+            <option value="">{tr("全部项目", "All projects")}</option>
+            {projects.map((p) => <option key={p} value={p}>{projName(p)}</option>)}
           </select>
           <select value={agent} onChange={(e) => setAgent(e.target.value)} className="input h-8 w-[100px] text-[12.5px]">
-            <option value="">全部 agent</option><option value="claude">claude</option><option value="pi">pi</option>
+            <option value="">{tr("全部 agent", "All agents")}</option><option value="claude">claude</option><option value="pi">pi</option>
           </select>
-          <label className="tl-check text-[12.5px] text-neutral-600"><input type="checkbox" checked={subs} onChange={(e) => setSubs(e.target.checked)} />子代理</label>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} className="input h-8 w-[200px] text-[12.5px]" placeholder="搜索对话内容…" />
+          <label className="tl-check text-[12.5px] text-neutral-600"><input type="checkbox" checked={subs} onChange={(e) => setSubs(e.target.checked)} />{tr("子代理", "Subagents")}</label>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} className="input h-8 w-[200px] text-[12.5px]" placeholder={tr("搜索对话内容…", "Search conversations…")} />
         </div>
       </div>
 
@@ -119,10 +126,10 @@ export function Sessions({ day, days, focusId }: { day: string; days: string[]; 
               {rs.map((r) => <Row key={r.id} r={r} on={sel === r.id} onClick={() => setSel(r.id)} />)}
             </div>
           ))}
-          {!shown.length && !loading && <div className="px-4 py-10 text-center text-[12.5px] text-neutral-400">这段时间没有会话</div>}
+          {!shown.length && !loading && <div className="px-4 py-10 text-center text-[12.5px] text-neutral-400">{tr("这段时间没有会话", "No sessions in this period")}</div>}
         </div>
         <div className="min-w-0">
-          {detail ? <Pane d={detail} onPick={setSel} range={selRow?.carried && selRow.range?.first_at ? selRow.range : null} /> : <div className="card py-24 text-center text-[13px] text-neutral-400">选择左侧的一个会话</div>}
+          {detail ? <Pane d={detail} onPick={setSel} range={selRow?.carried && selRow.range?.first_at ? selRow.range : null} /> : <div className="card py-24 text-center text-[13px] text-neutral-400">{tr("选择左侧的一个会话", "Select a session on the left")}</div>}
         </div>
       </div>
     </div>
@@ -141,19 +148,19 @@ function Row({ r, on, onClick }: { r: SessionRow; on: boolean; onClick: () => vo
         <i className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-[2px]" style={{ background: projectColor(r.project) }} />
         <div className="min-w-0 flex-1">
           <div className={`line-clamp-2 text-[13px] leading-snug ${title ? "text-neutral-900" : "italic text-neutral-400"}`}>
-            {g?.last_prompt && <span className="mr-1 text-neutral-400">最近:</span>}
-            {title ?? (r.subagent ? "子代理任务" : "没有输入(自动会话)")}
+            {g?.last_prompt && <span className="mr-1 text-neutral-400">{tr("最近:", "Latest:")}</span>}
+            {title ?? (r.subagent ? tr("子代理任务", "Subagent task") : tr("没有输入(自动会话)", "No input (automated session)"))}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11.5px] tabular-nums text-neutral-400">
             <span>{fmtHM(s)}–{fmtHM(e)}</span>
-            {g && <span className="rounded bg-amber-50 px-1 text-amber-700" title={`会话开始于 ${r.start_at.slice(0, 16).replace("T", " ")};统计只算所选日期内`}>自 {r.start_at.slice(5, 10)} 起</span>}
-            <span>{agentName(r.agent)}{r.subagent ? " · 子代理" : ""}</span>
-            <span className="text-neutral-600">{r.project === "Unassigned" ? "未归属" : r.project}</span>
-            <span>执行 {fmtDur(g ? g.exec_sec : r.exec_sec)}</span>
-            {prompts > 0 && <span>{prompts} 条指令</span>}
-            {!g && r.tools > 0 && <span>{r.tools} 次工具</span>}
-            {r.children.length > 0 && <span className="rounded bg-neutral-100 px-1 text-neutral-500">+{r.children.length} 子代理</span>}
-            {r.status === "running" && <span className="rounded bg-green-50 px-1 text-green-700">运行中</span>}
+            {g && <span className="rounded bg-amber-50 px-1 text-amber-700" title={tr(`会话开始于 ${r.start_at.slice(0, 16).replace("T", " ")};统计只算所选日期内`, `Session started ${r.start_at.slice(0, 16).replace("T", " ")}; stats count only the selected dates`)}>{tr(`自 ${r.start_at.slice(5, 10)} 起`, `since ${r.start_at.slice(5, 10)}`)}</span>}
+            <span>{agentName(r.agent)}{r.subagent ? tr(" · 子代理", " · subagent") : ""}</span>
+            <span className="text-neutral-600">{projName(r.project)}</span>
+            <span>{tr("执行", "Ran")} {fmtDur(g ? g.exec_sec : r.exec_sec)}</span>
+            {prompts > 0 && <span>{tr(`${prompts} 条指令`, `${prompts} ${prompts === 1 ? "prompt" : "prompts"}`)}</span>}
+            {!g && r.tools > 0 && <span>{tr(`${r.tools} 次工具`, `${r.tools} ${r.tools === 1 ? "tool call" : "tool calls"}`)}</span>}
+            {r.children.length > 0 && <span className="rounded bg-neutral-100 px-1 text-neutral-500">{tr(`+${r.children.length} 子代理`, `+${r.children.length} ${r.children.length === 1 ? "subagent" : "subagents"}`)}</span>}
+            {r.status === "running" && <span className="rounded bg-green-50 px-1 text-green-700">{tr("运行中", "Running")}</span>}
           </div>
         </div>
       </div>
@@ -210,32 +217,32 @@ function Pane({ d, onPick, range }: { d: SessionDetail; onPick: (id: number) => 
     <div className="card">
       <div className="border-b border-neutral-100 px-6 pb-3 pt-4">
         <div className="flex items-start gap-3">
-          <h2 className="min-w-0 flex-1 text-[17px] font-semibold leading-snug text-neutral-900">{d.title ?? "没有输入的会话"}</h2>
-          {d.status === "running" && <span className="shrink-0 rounded bg-green-50 px-1.5 text-[12px] text-green-700">运行中</span>}
+          <h2 className="min-w-0 flex-1 text-[17px] font-semibold leading-snug text-neutral-900">{d.title ?? tr("没有输入的会话", "Session with no input")}</h2>
+          {d.status === "running" && <span className="shrink-0 rounded bg-green-50 px-1.5 text-[12px] text-green-700">{tr("运行中", "Running")}</span>}
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5 text-[12px]">
-          <Chip><i className="mr-1 inline-block h-2 w-2 rounded-[2px]" style={{ background: projectColor(d.project) }} />{d.project === "Unassigned" ? "未归属" : d.project}</Chip>
-          <Chip>{agentName(d.agent)}{d.subagent ? " 子代理" : ""}{d.models.length ? ` · ${d.models.join(", ")}` : ""}</Chip>
+          <Chip><i className="mr-1 inline-block h-2 w-2 rounded-[2px]" style={{ background: projectColor(d.project) }} />{projName(d.project)}</Chip>
+          <Chip>{agentName(d.agent)}{d.subagent ? tr(" 子代理", " subagent") : ""}{d.models.length ? ` · ${d.models.join(", ")}` : ""}</Chip>
           <Chip>{d.start_at.slice(5, 10).replace("-", "/")} {fmtHM(d.start_at)}–{fmtHM(d.end_at ?? d.start_at)}</Chip>
-          <Chip>执行 {fmtDur(d.exec_sec)}</Chip>
-          <Chip>{d.prompts} 条指令 · {d.tools} 次工具{errors ? ` · ${errors} 次出错` : ""}</Chip>
+          <Chip>{tr("执行", "Ran")} {fmtDur(d.exec_sec)}</Chip>
+          <Chip>{tr(`${d.prompts} 条指令 · ${d.tools} 次工具${errors ? ` · ${errors} 次出错` : ""}`, `${d.prompts} ${d.prompts === 1 ? "prompt" : "prompts"} · ${d.tools} ${d.tools === 1 ? "tool call" : "tool calls"}${errors ? ` · ${errors} ${errors === 1 ? "error" : "errors"}` : ""}`)}</Chip>
           {d.tokens > 0 && <Chip>{tok(d.tokens)} tokens</Chip>}
-          {range && <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">所选日期:{fmtHM(range.first_at!)}–{fmtHM(range.last_at!)} · {range.prompts} 条指令 · 执行 {fmtDur(range.exec_sec)}</span>}
+          {range && <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">{tr(`所选日期:${fmtHM(range.first_at!)}–${fmtHM(range.last_at!)} · ${range.prompts} 条指令 · 执行 ${fmtDur(range.exec_sec)}`, `Selected dates: ${fmtHM(range.first_at!)}–${fmtHM(range.last_at!)} · ${range.prompts} ${range.prompts === 1 ? "prompt" : "prompts"} · ran ${fmtDur(range.exec_sec)}`)}</span>}
         </div>
-        <div className="mt-1.5 truncate font-mono text-[11.5px] text-neutral-400" title={`${d.cwd} · 归类:${d.project_reason}`}>{d.cwd}</div>
+        <div className="mt-1.5 truncate font-mono text-[11.5px] text-neutral-400" title={`${d.cwd} · ${tr("归类", "Attribution")}: ${reason(d.project_reason)}`}>{d.cwd}</div>
         {(d.children.length > 0 || d.parent_id) && (
           <div className="mt-2 flex flex-wrap gap-1.5 text-[12px]">
-            {d.parent_id && <button className="link" onClick={() => onPick(d.parent_id!)}>← 父会话 #{d.parent_id}</button>}
-            {d.children.map((c) => <button key={c} className="chip-x hover:bg-neutral-200" onClick={() => onPick(c)}>子代理 #{c}</button>)}
+            {d.parent_id && <button className="link" onClick={() => onPick(d.parent_id!)}>{tr("← 父会话", "← Parent session")} #{d.parent_id}</button>}
+            {d.children.map((c) => <button key={c} className="chip-x hover:bg-neutral-200" onClick={() => onPick(c)}>{tr("子代理", "Subagent")} #{c}</button>)}
           </div>
         )}
       </div>
       <div className="rail-tabs !static">
-        <button className={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>对话</button>
-        <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>质量评审</button>
+        <button className={tab === "chat" ? "on" : ""} onClick={() => setTab("chat")}>{tr("对话", "Conversation")}</button>
+        <button className={tab === "review" ? "on" : ""} onClick={() => setTab("review")}>{tr("质量评审", "Quality review")}</button>
         {tab === "chat" && (
           <label className="tl-check ml-auto pb-2 text-[12.5px] text-neutral-600">
-            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />只看我的指令
+            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />{tr("只看我的指令", "My prompts only")}
           </label>
         )}
       </div>
@@ -244,16 +251,16 @@ function Pane({ d, onPick, range }: { d: SessionDetail; onPick: (id: number) => 
           {hidden > 0 && (
             <button className="block w-full rounded-md border border-dashed border-neutral-200 py-1.5 text-[12px] text-neutral-500 hover:bg-neutral-50"
               onClick={() => setEarlier(true)}>
-              ↑ 显示更早的 {hidden} 条(会话开始于 {d.start_at.slice(5, 10)} {fmtHM(d.start_at)})
+              {tr(`↑ 显示更早的 ${hidden} 条(会话开始于 ${d.start_at.slice(5, 10)} ${fmtHM(d.start_at)})`, `↑ Show ${hidden} earlier (session started ${d.start_at.slice(5, 10)} ${fmtHM(d.start_at)})`)}
             </button>
           )}
           {shown.map((i, k) => k < hidden ? null : (
             <div key={k}>
-              {k === startIdx && startIdx > 0 && <div className="mb-2 flex items-center gap-2 text-[11.5px] text-neutral-400"><span className="h-px flex-1 bg-neutral-200" />{fmtHM(from!)} 起 · 所选日期<span className="h-px flex-1 bg-neutral-200" /></div>}
+              {k === startIdx && startIdx > 0 && <div className="mb-2 flex items-center gap-2 text-[11.5px] text-neutral-400"><span className="h-px flex-1 bg-neutral-200" />{tr(`${fmtHM(from!)} 起 · 所选日期`, `From ${fmtHM(from!)} · selected dates`)}<span className="h-px flex-1 bg-neutral-200" /></div>}
               <Bubble i={i} />
             </div>
           ))}
-          {!shown.length && <div className="py-10 text-center text-[12.5px] text-neutral-400">{mine ? "这个会话里没有你输入的指令" : "没有对话内容"}</div>}
+          {!shown.length && <div className="py-10 text-center text-[12.5px] text-neutral-400">{mine ? tr("这个会话里没有你输入的指令", "No prompts from you in this session") : tr("没有对话内容", "No conversation content")}</div>}
         </div>
       ) : <ReviewPanel d={d} />}
     </div>
@@ -268,7 +275,7 @@ function Bubble({ i }: { i: Item }) {
       <div className="flex flex-wrap items-center gap-1 pl-3 text-[11.5px] text-neutral-400">
         <span className="tabular-nums">{fmtHM(i.at)}</span>
         {entries.map(([n, c]) => <span key={n} className="rounded bg-neutral-100 px-1.5 font-mono text-neutral-500">{n}{c > 1 ? ` ×${c}` : ""}</span>)}
-        {i.errors > 0 && <span className="rounded bg-red-50 px-1.5 text-red-600">{i.errors} 次出错</span>}
+        {i.errors > 0 && <span className="rounded bg-red-50 px-1.5 text-red-600">{tr(`${i.errors} 次出错`, `${i.errors} ${i.errors === 1 ? "error" : "errors"}`)}</span>}
       </div>
     );
   }
@@ -277,7 +284,7 @@ function Bubble({ i }: { i: Item }) {
   if (i.k === "ctx") {
     return (
       <button onClick={() => setOpen(!open)} className="block w-full rounded-md px-3 py-1 text-left text-[11.5px] text-neutral-400 hover:bg-neutral-50">
-        <span className="tabular-nums">{fmtHM(i.e.at)}</span> 注入的上下文 / 系统消息 {open ? "▾" : "▸"}
+        <span className="tabular-nums">{fmtHM(i.e.at)}</span> {tr("注入的上下文 / 系统消息", "Injected context / system message")} {open ? "▾" : "▸"}
         {open && <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-neutral-500">{text}</div>}
       </button>
     );
@@ -285,11 +292,11 @@ function Bubble({ i }: { i: Item }) {
   const you = i.k === "you";
   return (
     <div className={`rounded-lg px-3.5 py-2.5 ${you ? "border-l-[3px] border-neutral-900 bg-neutral-50" : ""}`}>
-      <div className="mb-0.5 text-[11.5px] tabular-nums text-neutral-400">{fmtHM(i.e.at)} · {you ? "你" : "agent"}</div>
+      <div className="mb-0.5 text-[11.5px] tabular-nums text-neutral-400">{fmtHM(i.e.at)} · {you ? tr("你", "You") : "agent"}</div>
       <div className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed ${you ? "font-medium text-neutral-900" : "text-neutral-600"}`}>
         {long && !open ? text.slice(0, 420) + "…" : text}
       </div>
-      {long && <button className="link mt-1 text-[12px]" onClick={() => setOpen(!open)}>{open ? "收起" : "展开全文"}</button>}
+      {long && <button className="link mt-1 text-[12px]" onClick={() => setOpen(!open)}>{open ? tr("收起", "Collapse") : tr("展开全文", "Show full text")}</button>}
     </div>
   );
 }
@@ -300,18 +307,19 @@ function Chip({ children }: { children: React.ReactNode }) {
 
 // ---------------- review ----------------
 
-const PROMPT_DIMS: { key: keyof Review; label: string; max: number }[] = [
-  { key: "prompt_goal", label: "目标明确", max: 25 },
-  { key: "prompt_context", label: "上下文充分", max: 25 },
-  { key: "prompt_constraints", label: "约束清晰", max: 25 },
-  { key: "prompt_acceptance", label: "验收标准", max: 25 },
+type Dim = { key: keyof Review; label: string; max: number };
+const promptDims = (): Dim[] => [
+  { key: "prompt_goal", label: tr("目标明确", "Clear goal"), max: 25 },
+  { key: "prompt_context", label: tr("上下文充分", "Enough context"), max: 25 },
+  { key: "prompt_constraints", label: tr("约束清晰", "Clear constraints"), max: 25 },
+  { key: "prompt_acceptance", label: tr("验收标准", "Acceptance criteria"), max: 25 },
 ];
-const EXEC_DIMS: { key: keyof Review; label: string; max: number }[] = [
-  { key: "exec_planning", label: "规划", max: 15 },
-  { key: "exec_tools", label: "工具使用", max: 20 },
-  { key: "exec_error_recovery", label: "错误恢复", max: 20 },
-  { key: "exec_verification", label: "验证", max: 30 },
-  { key: "exec_efficiency", label: "效率", max: 15 },
+const execDims = (): Dim[] => [
+  { key: "exec_planning", label: tr("规划", "Planning"), max: 15 },
+  { key: "exec_tools", label: tr("工具使用", "Tool use"), max: 20 },
+  { key: "exec_error_recovery", label: tr("错误恢复", "Error recovery"), max: 20 },
+  { key: "exec_verification", label: tr("验证", "Verification"), max: 30 },
+  { key: "exec_efficiency", label: tr("效率", "Efficiency"), max: 15 },
 ];
 
 function ReviewPanel({ d }: { d: SessionDetail }) {
@@ -333,31 +341,31 @@ function ReviewPanel({ d }: { d: SessionDetail }) {
       const r = await api.review(d.id);
       if (r.review) setReview(r.review);
       else if ((r as unknown as Review).status === "analyzed") setReview(r as unknown as Review);
-      else setErr(r.message ?? "评审失败");
+      else setErr(r.message ?? tr("评审失败", "Review failed"));
     } catch (e) { setErr(String(e)); }
     setBusy(false);
   };
   const v = (k: keyof Review) => (review as unknown as Record<string, number | undefined> | null)?.[k as string];
-  const sum = (dims: typeof PROMPT_DIMS) => dims.reduce((s, x) => s + (v(x.key) ?? 0), 0);
+  const sum = (dims: Dim[]) => dims.reduce((s, x) => s + (v(x.key) ?? 0), 0);
   return (
     <div className="px-6 py-4">
       <div className="flex items-center gap-3">
         <div className="text-[12.5px] text-neutral-500">
-          按固定 rubric 打分:你的指令质量 4×25 分 + agent 执行 5 项共 100 分;结果按内容指纹缓存。
+          {tr("按固定 rubric 打分:你的指令质量 4×25 分 + agent 执行 5 项共 100 分;结果按内容指纹缓存。", "Scored with a fixed rubric: prompt quality 4×25 points + agent execution 5 items for 100 points; results are cached by content fingerprint.")}
         </div>
         <button className="btn-primary ml-auto h-8 shrink-0 text-[12.5px]" disabled={busy || !d.review_available} onClick={go}>
-          {busy ? "评审中…" : review ? "重新评审" : "开始评审"}</button>
+          {busy ? tr("评审中…", "Reviewing…") : review ? tr("重新评审", "Re-review") : tr("开始评审", "Start review")}</button>
       </div>
-      {!d.review_available && <div className="mt-2 text-[12.5px] text-amber-700">没有可用的 LLM(配置百炼密钥后即可评审)。</div>}
+      {!d.review_available && <div className="mt-2 text-[12.5px] text-amber-700">{tr("没有可用的 LLM(配置百炼密钥后即可评审)。", "No LLM available (configure a Bailian key to enable review).")}</div>}
       {err && <div className="mt-2 text-[12.5px] text-red-600">{err}</div>}
       {review && (
         <div className="mt-4 space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {([["你的指令", PROMPT_DIMS], ["Agent 执行", EXEC_DIMS]] as const).map(([title, dims]) => (
+            {([[tr("你的指令", "Your prompts"), promptDims()], [tr("Agent 执行", "Agent execution"), execDims()]] as const).map(([title, dims]) => (
               <div key={title} className="rounded-lg bg-neutral-50 px-4 py-3">
                 <div className="flex items-baseline justify-between">
                   <span className="text-[13px] font-semibold text-neutral-800">{title}</span>
-                  <span className="text-[18px] font-semibold tabular-nums text-neutral-900">{sum(dims as never)}<span className="text-[12px] font-normal text-neutral-400">/100</span></span>
+                  <span className="text-[18px] font-semibold tabular-nums text-neutral-900">{sum(dims as Dim[])}<span className="text-[12px] font-normal text-neutral-400">/100</span></span>
                 </div>
                 <div className="mt-2 space-y-1.5">
                   {dims.map((x) => {
@@ -379,13 +387,13 @@ function ReviewPanel({ d }: { d: SessionDetail }) {
           {review.summary && <div className="text-[13px] leading-relaxed text-neutral-700">{review.summary}</div>}
           {review.suggestions?.length ? (
             <div>
-              <div className="label mb-2">改进建议</div>
+              <div className="label mb-2">{tr("改进建议", "Suggestions")}</div>
               <ol className="space-y-1.5">
                 {review.suggestions.map((s, k) => (
                   <li key={k} className="group flex items-start gap-2 rounded-md px-2 py-1 text-[13px] leading-relaxed hover:bg-neutral-50">
                     <span className="tabular-nums text-neutral-400">{k + 1}.</span>
                     <span className="flex-1 text-neutral-700">{s}</span>
-                    <button className="btn h-6 shrink-0 px-2 text-[11px] opacity-0 group-hover:opacity-100" onClick={() => navigator.clipboard?.writeText(s)}>复制</button>
+                    <button className="btn h-6 shrink-0 px-2 text-[11px] opacity-0 group-hover:opacity-100" onClick={() => navigator.clipboard?.writeText(s)}>{tr("复制", "Copy")}</button>
                   </li>
                 ))}
               </ol>
@@ -393,13 +401,13 @@ function ReviewPanel({ d }: { d: SessionDetail }) {
           ) : null}
           <div className="flex items-center gap-2 border-t border-neutral-100 pt-3">
             <select value={rating} onChange={(e) => setRating(e.target.value)} className="input h-8 w-32 text-[12.5px]">
-              <option value="">这次评审…</option>
-              <option value="helpful">有帮助</option><option value="partially">部分有用</option>
-              <option value="not_helpful">没帮助</option><option value="wrong">不准确</option>
+              <option value="">{tr("这次评审…", "This review…")}</option>
+              <option value="helpful">{tr("有帮助", "Helpful")}</option><option value="partially">{tr("部分有用", "Partly useful")}</option>
+              <option value="not_helpful">{tr("没帮助", "Not helpful")}</option><option value="wrong">{tr("不准确", "Inaccurate")}</option>
             </select>
-            <input value={comment} onChange={(e) => setComment(e.target.value)} className="input h-8 flex-1 text-[12.5px]" placeholder="一句话说明(可选)" />
+            <input value={comment} onChange={(e) => setComment(e.target.value)} className="input h-8 flex-1 text-[12.5px]" placeholder={tr("一句话说明(可选)", "One-line note (optional)")} />
             <button className="btn h-8 text-[12.5px]" disabled={!rating || sent}
-              onClick={async () => { await api.feedback({ session_id: d.id, rating, comment }); setSent(true); }}>{sent ? "已提交" : "提交反馈"}</button>
+              onClick={async () => { await api.feedback({ session_id: d.id, rating, comment }); setSent(true); }}>{sent ? tr("已提交", "Submitted") : tr("提交反馈", "Submit feedback")}</button>
           </div>
         </div>
       )}

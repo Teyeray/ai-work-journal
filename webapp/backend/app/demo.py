@@ -152,6 +152,23 @@ def _git(repo: Path, *args, env=None):
                    env={**os.environ, **(env or {})})
 
 
+def _reports(out: Path, done: dict, now: dt.datetime):
+    """Sample daily reports (what `journal daily` writes) for finished days."""
+    out.mkdir(parents=True)
+    for day0, items in sorted(done.items()):
+        if day0.date() >= now.date():
+            continue
+        lines = [f"# Daily report {day0:%Y-%m-%d}", "", "## Done today", ""]
+        for p in sorted({i[0] for i in items}):
+            lines += [f"### {p}", ""] + [f"- {subj} — done ({at:%H:%M})" for q, subj, at in sorted(items, key=lambda i: i[2])
+                                         if q == p] + [""]
+        lines += ["## Next", "", "- Follow up on review comments", "- Keep CI green", ""]
+        f = out / f"{day0:%Y-%m-%d}.md"
+        f.write_text("\n".join(lines), encoding="utf-8")
+        t = day0.replace(hour=23, minute=7).timestamp()
+        os.utime(f, (t, t))
+
+
 def build(root: Path, days: int = 14, seed: int = 7) -> dict:
     rng = random.Random(seed)
     if root.exists():
@@ -171,6 +188,7 @@ def build(root: Path, days: int = 14, seed: int = 7) -> dict:
         repos[p] = repo
 
     aw_rows, n_sessions, n_commits = [], 0, 0
+    done = {}                                              # day -> [(project, subject, at)]
     for back in range(days - 1, -1, -1):
         day0 = today - dt.timedelta(days=back)
         if day0.isoweekday() > 5 and back:
@@ -201,9 +219,13 @@ def build(root: Path, days: int = 14, seed: int = 7) -> dict:
                              encoding="utf-8")
                 _git(repos[p], "add", "-A")
                 stamp = at.isoformat()
-                _git(repos[p], "commit", "-q", "-m", rng.choice(PROJECTS[p]["commits"]),
+                subject = rng.choice(PROJECTS[p]["commits"])
+                _git(repos[p], "commit", "-q", "-m", subject,
                      env={"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp})
+                done.setdefault(day0, []).append((p, subject, at))
                 n_commits += 1
+
+    _reports(root / "reports", done, now)
 
     # windows go straight into the store (no ActivityWatch needed for the demo)
     from . import db, ingest

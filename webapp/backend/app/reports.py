@@ -19,10 +19,11 @@ from pathlib import Path
 
 from . import config
 
-REPORTS = config.REPO_ROOT / "reports"
+REPORTS = config.REPORTS_DIR
 WEEKLY = REPORTS / "weekly"
-FEISHU_MAP = config.REPO_ROOT / "data" / "feishu-map.json"
-SCHEDULE = Path(os.environ.get("JOURNAL_SCHEDULE_FILE", str(config.CONFIG_DIR / "schedule.json")))
+FEISHU_MAP = config.DATA_DIR / "feishu-map.json"
+SCHEDULE = Path(os.environ.get("JOURNAL_SCHEDULE_FILE", str(
+    (Path(config.DEMO_DIR) if config.DEMO_DIR else config.CONFIG_DIR) / "schedule.json")))
 LOG_DIR = config.CACHE_DIR
 DEFAULT_SCHEDULE = {"daily_weekdays": [1, 2, 3, 4, 5, 6, 7], "weekly_enabled": True, "feishu_push": True}
 UNITS = {"daily": "ai-journal-daily", "weekly": "ai-journal-weekly"}  # = osutil.JOBS labels
@@ -98,7 +99,7 @@ def set_schedule(s: dict) -> dict:
 def timer_status() -> dict:
     out = {}
     for kind in UNITS:
-        st = config.osutil.schedule_status(kind)
+        st = {"installed": False, "running": False} if config.DEMO_DIR else config.osutil.schedule_status(kind)
         out[kind] = {**st, "running": st["running"] or _manual_running(kind), "manual": _manual(kind)}
     return out
 
@@ -123,6 +124,8 @@ def run_now(kind: str) -> dict:
     Feishu if the pipeline is set to). Detached; output goes to a log file."""
     if kind not in UNITS:
         raise ValueError("kind must be daily or weekly")
+    if config.DEMO_DIR:   # the demo must never run the real pipeline
+        return {"started": False, "reason": "demo"}
     if _manual_running(kind):
         return {"started": False, "reason": "already running"}
     LOG_DIR.mkdir(parents=True, exist_ok=True)

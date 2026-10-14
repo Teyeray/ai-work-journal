@@ -23,7 +23,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import capture, config, db, ocr, projects, reports, sessions_view
+from . import capture, config, db, i18n, ocr, projects, reports, sessions_view
+from .i18n import tr
 from .timeline import _is_prompt
 from .timeutil import now_iso, parse_ts, tz
 
@@ -192,7 +193,7 @@ def _other_sources(day: str) -> dict:
     out = {}
     if (reports.REPORTS / f"{day}.md").exists():
         out["daily_report"] = f"有日报,read_report('daily', '{day}')"
-    f = config.REPO_ROOT / "data" / f"{day}.json"
+    f = config.DATA_DIR / f"{day}.json"
     if f.exists():
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
@@ -350,20 +351,22 @@ def screen_status() -> dict:
         return {"state": "off"}
     # short cache while broken, so an approval shows up quickly
     ttl = 60 if (_SP_STATUS["v"] or {}).get("state") == "ok" else 8
-    if time.time() - _SP_STATUS["at"] < ttl and _SP_STATUS["v"]:
+    if time.time() - _SP_STATUS["at"] < ttl and _SP_STATUS["v"] and _SP_STATUS.get("lang") == i18n.lang():
         return _SP_STATUS["v"]
     try:
         h = _sp_health()
     except Exception as e:  # noqa: BLE001 — connection refused etc.
         if time.time() - _SP_STATUS["restarted_at"] < 120:
             v = {"state": "stalled", "awaiting_approval": True, "restartable": bool(config.SP_SERVICE),
-                 "reason": "正在重启 screenpipe,马上会弹出「屏幕共享」对话框",
-                 "hint": "对话框可能在别的窗口后面或另一块屏上,按 Super 键在概览里找"}
-            _SP_STATUS.update(at=time.time(), v=v)
+                 "reason": tr("正在重启 screenpipe,马上会弹出「屏幕共享」对话框",
+                              "Restarting screenpipe — the screen-share dialog will appear shortly"),
+                 "hint": tr("对话框可能在别的窗口后面或另一块屏上,按 Super 键在概览里找",
+                            "It may be behind another window or on the other screen; press Super to find it")}
+            _SP_STATUS.update(at=time.time(), v=v, lang=i18n.lang())
             return v
-        v = {"state": "down", "reason": f"screenpipe 没有运行({type(e).__name__})",
-             "hint": "启动:screenpipe record --use-all-monitors"}
-        _SP_STATUS.update(at=time.time(), v=v)
+        v = {"state": "down", "reason": tr("screenpipe 没有运行", "screenpipe is not running") + f" ({type(e).__name__})",
+             "hint": tr("启动:", "Start it: ") + "screenpipe record --use-all-monitors"}
+        _SP_STATUS.update(at=time.time(), v=v, lang=i18n.lang())
         return v
     last = h.get("last_frame_timestamp")
     lt = dt.datetime.fromisoformat(last) if last else None
@@ -377,23 +380,34 @@ def screen_status() -> dict:
         # restarted from the page: waiting for the screen-share dialog to be approved
         v["state"] = "stalled"
         v["awaiting_approval"] = True
-        v["reason"] = "已重启,正在等你在「屏幕共享」对话框里点允许"
-        v["hint"] = "对话框可能在别的窗口后面或另一块屏上,按 Super 键在概览里找;错过了可以再点一次重启"
+        v["reason"] = tr("已重启,正在等你在「屏幕共享」对话框里点允许",
+                         "Restarted — waiting for you to allow it in the screen-share dialog")
+        v["hint"] = tr("对话框可能在别的窗口后面或另一块屏上,按 Super 键在概览里找;错过了可以再点一次重启",
+                       "It may be behind another window or on the other screen (press Super); "
+                       "if you missed it, restart again")
     elif h.get("vision_db_write_stalled") or age is None or age > 30 * 60:
         v["state"] = "stalled"
         cause = _sp_log_cause()
         if cause == "no_portal":
-            v["reason"] = ("系统的屏幕共享服务(xdg-desktop-portal)找不到 ScreenCast 后端,授权框弹不出来"
-                           "——常见于切换过桌面环境后门户服务还按旧桌面在运行")
-            v["hint"] = "点「重启截屏」:会先重启门户服务,再重启 screenpipe,然后弹出授权框"
+            v["reason"] = tr("系统的屏幕共享服务(xdg-desktop-portal)找不到 ScreenCast 后端,授权框弹不出来"
+                             "——常见于切换过桌面环境后门户服务还按旧桌面在运行",
+                             "The system screen-share service (xdg-desktop-portal) has no ScreenCast backend, "
+                             "so the approval dialog can't appear — usually it is still running for a desktop "
+                             "you switched away from")
+            v["hint"] = tr("点「重启截屏」:会先重启门户服务,再重启 screenpipe,然后弹出授权框",
+                           "Click Restart capture: it restarts the portal, then screenpipe, then the dialog appears")
             v["portal_broken"] = True
         elif cause == "wayland":
-            v["reason"] = "Wayland 屏幕共享授权失效或没有被允许(常见于锁屏/注销后,或错过了授权对话框)"
-            v["hint"] = "点「重启截屏」,然后在弹出的屏幕共享对话框里选上所有显示器并允许"
+            v["reason"] = tr("Wayland 屏幕共享授权失效或没有被允许(常见于锁屏/注销后,或错过了授权对话框)",
+                             "Wayland screen-share permission expired or wasn't granted "
+                             "(common after lock/logout, or a missed dialog)")
+            v["hint"] = tr("点「重启截屏」,然后在弹出的屏幕共享对话框里选上所有显示器并允许",
+                           "Click Restart capture, then select all monitors in the dialog and allow")
         else:
-            v["reason"] = (h.get("message") or "截屏没有新帧写入")[:200]
-            v["hint"] = "重启 screenpipe,并查看 ~/.screenpipe/ 下的日志"
-    _SP_STATUS.update(at=time.time(), v=v)
+            v["reason"] = (h.get("message") or tr("截屏没有新帧写入", "No new frames are being written"))[:200]
+            v["hint"] = tr("重启 screenpipe,并查看 ~/.screenpipe/ 下的日志",
+                           "Restart screenpipe and check the logs under ~/.screenpipe/")
+    _SP_STATUS.update(at=time.time(), v=v, lang=i18n.lang())
     return v
 
 
@@ -401,16 +415,16 @@ def restart_screen() -> dict:
     """Restart the screenpipe service (systemd / launchd / Task Scheduler):
     on Wayland that brings the screen-share dialog back."""
     if not config.SP_SERVICE:
-        return {"ok": False, "error": "没有配置 screenpipe 服务(config.json sp_service)"}
+        return {"ok": False, "error": tr("没有配置 screenpipe 服务", "No screenpipe service configured") + " (config.json sp_service)"}
     if time.time() - _SP_STATUS["restarted_at"] < 15:
-        return {"ok": False, "error": "刚刚重启过,稍等几秒"}
+        return {"ok": False, "error": tr("刚刚重启过,稍等几秒", "Just restarted — wait a few seconds")}
     if config.osutil.SYSTEM == "linux" and _sp_log_cause() == "no_portal":
         # the portal process inherited another desktop's environment: restart
         # it under the current session so ScreenCast resolves to the right backend
         config.osutil.restart_service("xdg-desktop-portal.service")
     ok, err = config.osutil.restart_service(config.SP_SERVICE)
     if not ok:
-        return {"ok": False, "error": err or "重启失败"}
+        return {"ok": False, "error": err or tr("重启失败", "Restart failed")}
     _SP_STATUS.update(at=0, v=None, restarted_at=time.time())
     return {"ok": True}
 
@@ -578,7 +592,7 @@ def screen_text(query=None, start=None, end=None, limit=8, offset=0):
 
 def feishu(day):
     day = _day(day)
-    f = config.REPO_ROOT / "data" / f"{day}.json"
+    f = config.DATA_DIR / f"{day}.json"
     try:
         d = json.loads(f.read_text(encoding="utf-8")).get("feishu") or {}
     except (OSError, ValueError):
@@ -689,7 +703,7 @@ def search(query, start=None, end=None):
                     break
     fs = []
     for d in days:
-        f = config.REPO_ROOT / "data" / f"{d}.json"
+        f = config.DATA_DIR / f"{d}.json"
         if not f.exists():
             continue
         try:
@@ -819,7 +833,7 @@ SYSTEM = """你是用户个人工作看板里的助手,回答关于 TA 自己工
 能并行的调用一次发出。一般 1–4 次调用就够,不要为了周全把所有工具都调一遍。
 
 ## 回答
-- 用中文,先给结论,再列依据;数字带单位(如 1h20m)。
+- 用{answer_lang},先给结论,再列依据;数字带单位(如 1h20m)。
 - 只根据工具返回的数据回答;查不到就直说"数据里没有",并说明查了哪里。区分"没有记录"和"没做"(比如那天窗口没采集)。
 - 引用时给出可点的链接。只有这四种格式可用,不要发明别的(提交、窗口、PR 不加链接):
   会话 [标题](#session/ID),某天 [10-07](#day/2026-10-07),日报 [日报 10-07](#report/daily/2026-10-07),周报 [W41](#report/weekly/2026-W41)。
@@ -832,8 +846,9 @@ SYSTEM = """你是用户个人工作看板里的助手,回答关于 TA 自己工
 """
 
 
-def system_prompt(context: dict = None) -> str:
-    s = SYSTEM.replace("{catalog}", catalog())
+def system_prompt(context: dict = None, lang: str = "zh") -> str:
+    s = SYSTEM.replace("{catalog}", catalog()).replace(
+        "{answer_lang}", "英文(English)回答" if lang == "en" else "中文")
     if context:
         bits = []
         if context.get("tab"):
@@ -974,11 +989,11 @@ def _stream(messages: list, tools=True):
     yield "message", msg
 
 
-def ask(text: str, thread_id: int = None, context: dict = None):
+def ask(text: str, thread_id: int = None, context: dict = None, lang: str = "zh"):
     """Run one turn. Yields display events (dicts); persists every message."""
     text = (text or "").strip()
     if not text:
-        yield {"type": "error", "message": "问题为空"}
+        yield {"type": "error", "message": "问题为空" if lang == "zh" else "Empty question"}
         return
     if thread_id and not db.q1("SELECT id FROM chat_threads WHERE id=?", (thread_id,)):
         thread_id = None
@@ -991,7 +1006,7 @@ def ask(text: str, thread_id: int = None, context: dict = None):
     turn = last + 1
     user = {"role": "user", "content": text, "display": text, "context": context or None}
     _save(thread_id, turn, user)
-    messages = [{"role": "system", "content": system_prompt(context)}, *history,
+    messages = [{"role": "system", "content": system_prompt(context, lang)}, *history,
                 {"role": "user", "content": text}]
     try:
         for rnd in range(MAX_ROUNDS + 1):

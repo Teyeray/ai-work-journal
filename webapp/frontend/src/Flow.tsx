@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { cleanTitle, isCategory, projectColor } from "./api";
 import type { Timeline } from "./api";
+import { tr, label, reason } from "./i18n";
 import { durS, hm, hms, placeOf, t2m, type Visit } from "./visits";
 
 /**
@@ -74,17 +75,17 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
     <div>
       <div className="border-b border-neutral-100 px-4 pb-3 pt-3.5">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-[15px] font-semibold text-neutral-900">活动流</h3>
-          <span className="text-[12px] tabular-nums text-neutral-400">跟随时间轴视野 · {hm(a)}–{hm(b)}</span>
+          <h3 className="text-[15px] font-semibold text-neutral-900">{tr("活动流", "Activity flow")}</h3>
+          <span className="text-[12px] tabular-nums text-neutral-400">{tr("跟随时间轴视野", "Follows timeline view")} · {hm(a)}–{hm(b)}</span>
         </div>
         <div className="mt-2.5 grid grid-cols-3 gap-2">
-          <Mini v={durS(stats.active)} l="前台活跃" />
-          <Mini v={`${stats.switches}`} l={`应用切换 · ${stats.perHour.toFixed(0)}/时`} />
-          <Mini v={durS(stats.avg)} l="平均停留" />
+          <Mini v={durS(stats.active)} l={tr("前台活跃", "Foreground active")} />
+          <Mini v={`${stats.switches}`} l={tr(`应用切换 · ${stats.perHour.toFixed(0)}/时`, `App switches · ${stats.perHour.toFixed(0)}/h`)} />
+          <Mini v={durS(stats.avg)} l={tr("平均停留", "Avg. stay")} />
         </div>
         {stats.longest && (
           <div className="mt-2 truncate text-[12px] text-neutral-500">
-            最长停留 <b className="font-medium text-neutral-700">{durS(stats.longest.e - stats.longest.s)}</b> · {stats.longest.appLabel} · {cleanTitle(stats.longest.title)}
+            {tr("最长停留", "Longest stay")} <b className="font-medium text-neutral-700">{durS(stats.longest.e - stats.longest.s)}</b> · {stats.longest.appLabel} · {cleanTitle(stats.longest.title)}
           </div>
         )}
       </div>
@@ -100,11 +101,11 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="flow-app" style={{ color: cat ? "#71717a" : projectColor(v.project), borderColor: cat ? "#e4e4e7" : projectColor(v.project) }}>{v.appLabel}</span>
-                    <span className="min-w-0 truncate text-[12.5px] text-neutral-800" title={`${v.title}\n归类: ${v.project} · ${v.reason ?? ""}`}>{placeOf(v)}</span>
+                    <span className="min-w-0 truncate text-[12.5px] text-neutral-800" title={`${v.title}\n${tr("归类", "Filed under")}: ${label(v.project)} · ${reason(v.reason ?? "")}`}>{placeOf(v)}</span>
                   </div>
                   <div className="mt-1 flex items-center gap-2">
                     <div className="flow-bar"><i style={{ width: bar(v.e - v.s), background: cat ? "#c6cad2" : projectColor(v.project) }} /></div>
-                    <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">{durS(v.e - v.s)}{cat ? "" : ` · ${v.project}`}</span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-neutral-400">{durS(v.e - v.s)}{cat ? "" : ` · ${label(v.project)}`}</span>
                   </div>
                 </div>
               </div>
@@ -116,7 +117,7 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
               <div key={`b${k}`} className="flow-row burst">
                 <span className="flow-t">{hms(it.t)}</span>
                 <div className="text-[12px] text-neutral-400">
-                  快速切换 {it.vs.length} 次 · {apps.join(" / ")} · 共 {durS(it.vs.reduce((s, v) => s + v.e - v.s, 0))}
+                  {tr(`快速切换 ${it.vs.length} 次`, `${it.vs.length} quick switches`)} · {apps.join(" / ")} · {tr("共", "total")} {durS(it.vs.reduce((s, v) => s + v.e - v.s, 0))}
                 </div>
               </div>
             );
@@ -126,7 +127,7 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
               <div key={`p${k}`} className="flow-row prompt">
                 <span className="flow-t">{hms(it.t)}</span>
                 <div className="flow-q" style={{ borderColor: projectColor(it.project) }}>
-                  <span className="text-neutral-400">❯ {it.project}</span> {it.text}
+                  <span className="text-neutral-400">❯ {label(it.project)}</span> {it.text}
                 </div>
               </div>
             );
@@ -139,8 +140,8 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
             </div>
           );
         })}
-        {items.length > MAX_ROWS && <div className="px-2 py-2 text-[12px] text-neutral-400">还有 {items.length - MAX_ROWS} 条,在时间轴上放大查看。</div>}
-        {!items.length && <div className="px-2 py-6 text-[12.5px] text-neutral-400">这段时间没有前台窗口或证据。</div>}
+        {items.length > MAX_ROWS && <div className="px-2 py-2 text-[12px] text-neutral-400">{tr(`还有 ${items.length - MAX_ROWS} 条,在时间轴上放大查看。`, `${items.length - MAX_ROWS} more; zoom in on the timeline to see them.`)}</div>}
+        {!items.length && <div className="px-2 py-6 text-[12.5px] text-neutral-400">{tr("这段时间没有前台窗口或证据。", "No foreground windows or evidence in this period.")}</div>}
       </div>
     </div>
   );

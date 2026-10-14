@@ -8,10 +8,12 @@ import { Reports } from "./Reports";
 import { useSse } from "./sse";
 import { ScreenAlert } from "./ScreenAlert";
 import { ChatDock } from "./Chat";
+import { setLang, tr, useLang } from "./i18n";
 
 type Tab = "today" | "analytics" | "sessions" | "projects" | "reports";
 
 export default function App() {
+  const lang = useLang();
   const [tab, setTab] = useState<Tab>(
     (new URLSearchParams(location.search).get("t") as Tab) || "today",
   );
@@ -74,10 +76,11 @@ export default function App() {
         <div className={`mx-auto flex h-12 ${tab === "today" ? "max-w-[2200px]" : "max-w-[1600px]"} items-center gap-5 px-6`}>
           <span className="flex items-center gap-2 text-[13.5px] font-semibold tracking-tight text-neutral-900">
             <span className="flex h-5 w-5 items-center justify-center rounded-md bg-neutral-800 text-[10px] font-bold text-white">AI</span>
-            工作看板
+            {tr("工作看板", "Work Journal")}
           </span>
           <nav className="flex items-center gap-0.5">
-            {([["today", "今日"], ["analytics", "分析"], ["sessions", "会话"], ["projects", "项目"], ["reports", "日报"]] as [Tab, string][])
+            {([["today", tr("今日", "Today")], ["analytics", tr("分析", "Analytics")], ["sessions", tr("会话", "Sessions")],
+              ["projects", tr("项目", "Projects")], ["reports", tr("日报", "Reports")]] as [Tab, string][])
               .map(([t, label]) => (
                 <button key={t}
                   className={`tab ${tab === t ? "tab-active" : ""}`}
@@ -85,24 +88,30 @@ export default function App() {
               ))}
           </nav>
           <div className="ml-auto flex items-center gap-3">
-            <ScreenAlert />
+            <ScreenAlert key={lang} />
             <span className={`flex items-center gap-1.5 text-[11px] font-medium ${connected ? "text-green-600" : "text-neutral-400"}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-green-500 running-dot" : "bg-neutral-300"}`} />
-              {connected ? "实时" : "离线"}
+              {connected ? tr("实时", "Live") : tr("离线", "Offline")}
             </span>
             <button className="btn" disabled={syncing} onClick={sync}>
-              {syncing ? "同步中…" : "同步数据"}
+              {syncing ? tr("同步中…", "Syncing…") : tr("同步数据", "Sync")}
+            </button>
+            <button className="btn" title={tr("Switch to English", "切换到中文")}
+              onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
+              {lang === "zh" ? "EN" : "中"}
             </button>
           </div>
         </div>
       </header>
 
+      <div key={lang}>
       {tab === "today" && <Today day={day} days={days} onDayChange={setDay} goTab={goTab} />}
       {tab === "analytics" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Analytics days={days.length ? days : [day]} goDay={(d) => goTab("today", d)} /></div>}
       {tab === "sessions" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Sessions day={day} days={days} focusId={focusSession} /></div>}
       {tab === "projects" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Projects /></div>}
       <ChatDock tab={tab} day={day} onNavigate={navigate} />
       {tab === "reports" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Reports focus={focusReport} /></div>}
+      </div>
     </div>
   );
 }

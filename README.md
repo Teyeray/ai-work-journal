@@ -17,9 +17,9 @@ writes your daily and weekly reports, and answers questions about your own work.
 
 [**Quick start**](#-quick-start) · [Features](#-features) · [Screen OCR](#-screen-text--pluggable-ocr) · [Platforms](#-platform-support) · [Configuration](#%EF%B8%8F-configuration) · [Architecture](#-architecture) · [中文文档](README.zh-CN.md)
 
-<img src="docs/images/today.png" alt="Today: one timeline for you and your agents" width="100%">
+<img src="docs/images/en/today.png" alt="Today: one timeline for you and your agents" width="100%">
 
-<sub>All screenshots come from <code>journal demo</code>, which uses synthetic data. The UI is in Chinese.</sub>
+<sub>All screenshots come from <code>journal demo</code>, which uses synthetic data. The UI speaks English and Chinese — switch with <b>EN / 中</b> in the header.</sub>
 
 </div>
 
@@ -53,14 +53,14 @@ Everything is stored in SQLite on your machine. Model calls (reports, chat, OCR)
 </td>
 <td width="50%" valign="top">
 
-<img src="docs/images/timeline.png" alt="Timeline">
+<img src="docs/images/en/timeline.png" alt="Timeline">
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-<img src="docs/images/analytics.png" alt="Analytics">
+<img src="docs/images/en/analytics.png" alt="Analytics">
 
 </td>
 <td valign="top">
@@ -86,14 +86,14 @@ Everything is stored in SQLite on your machine. Model calls (reports, chat, OCR)
 </td>
 <td valign="top">
 
-<img src="docs/images/sessions.png" alt="Sessions">
+<img src="docs/images/en/sessions.png" alt="Sessions">
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-<img src="docs/images/projects.png" alt="Projects">
+<img src="docs/images/en/projects.png" alt="Projects">
 
 </td>
 <td valign="top">
@@ -110,13 +110,19 @@ Everything is stored in SQLite on your machine. Model calls (reports, chat, OCR)
 
 **And also:**
 
+- 🌐 **English and Chinese UI.** One click in the header switches every page; generated insights, status messages and Ask AI answers follow the same language.
 - 📝 **Daily and weekly reports.** They are written from a template by your LLM CLI and optionally pushed to Feishu/Lark. Schedule them per weekday from the UI.
 - 💬 **Ask AI (⌘/Ctrl+J).** A tool-using chat over your history, for example "what did I ship on atlas-api last week?" or "what was I doing at 2pm on Tuesday?". It reads progressively: catalog first, then summaries, then rows, then raw text. Answers link to sessions, days and screenshots.
 - 🖥️ **Screen text.** Search what was on screen, using [screenpipe](https://github.com/mediar-ai/screenpipe) or the built-in sampler, with [any OCR model behind an API](#-screen-text--pluggable-ocr).
 - 🩺 **`journal doctor`** checks collectors, OCR, keys, tools and the schedule.
 - 🧪 **`journal demo`** gives you a synthetic two weeks to explore before installing anything.
 
-<div align="center"><img src="docs/images/day-picker.png" alt="Heat-calendar day picker" width="300"><br><sub>The day picker is a heat calendar of your time at the computer.</sub></div>
+<table>
+<tr>
+<td width="68%" valign="top"><img src="docs/images/en/reports.png" alt="Reports"><br><sub>Reports: schedule per weekday, browse history, push to Feishu/Lark.</sub></td>
+<td width="32%" valign="top"><img src="docs/images/en/day-picker.png" alt="Heat-calendar day picker"><br><sub>The day picker is a heat calendar of your time at the computer.</sub></td>
+</tr>
+</table>
 
 ## 🚀 Quick start
 
@@ -325,16 +331,16 @@ journal install             put `journal` on your PATH
 ## 🧑‍💻 Development
 
 ```bash
-cd webapp/backend && ../.venv/bin/python -m pytest -q     # 101 backend tests
+cd webapp/backend && ../.venv/bin/python -m pytest -q     # 105 backend tests
 cd webapp/frontend && npm run dev                          # Vite dev server (proxies the API)
-node webapp/frontend/verify-today.mjs                      # 73 real-browser checks (needs a running server)
+node webapp/frontend/verify-today.mjs                      # 78 real-browser checks (needs a running server)
 ```
 
 Pull requests are welcome. Please keep new OS-specific code in `osutil.py` and add a test next to the feature.
 
 ## 🗺️ Roadmap
 
-- [ ] English UI
+- [x] English UI
 - [ ] More agent sources (Codex CLI, Cursor, Aider)
 - [ ] Packaged installers (Homebrew tap, winget, AppImage)
 - [ ] Per-project weekly digest emails

@@ -16,9 +16,15 @@ const browser = await puppeteer.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage", "--force-device-scale-factor=1"],
   defaultViewport: { width: 1600, height: 1000 },
 });
+// the checks below read Chinese UI text; pin the language (a separate block checks English)
+async function zhPage() {
+  const p = await browser.newPage();
+  await p.evaluateOnNewDocument(() => { try { localStorage.setItem("lang", "zh"); } catch { /* */ } });
+  return p;
+}
 
 async function open(url) {
-  const page = await browser.newPage();
+  const page = await zhPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("response", (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
@@ -237,7 +243,7 @@ for (const [day, name] of [["2026-10-05", "heavy"], ["2026-09-30", "no-observati
 
 // ---------- 10. projects & rules page (read-only checks: previews, never saves) ----------
 {
-  const page = await browser.newPage();
+  const page = await zhPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(BASE + "/?t=projects", { waitUntil: "domcontentloaded" });
@@ -278,7 +284,7 @@ for (const [day, name] of [["2026-10-05", "heavy"], ["2026-09-30", "no-observati
 
 // ---------- 11. analytics page ----------
 {
-  const page = await browser.newPage();
+  const page = await zhPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("response", (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
@@ -309,7 +315,7 @@ for (const [day, name] of [["2026-10-05", "heavy"], ["2026-09-30", "no-observati
 
 // ---------- 12. reports / sessions / projects pages (read-only checks) ----------
 {
-  const page = await browser.newPage();
+  const page = await zhPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   page.on("response", (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
@@ -507,6 +513,30 @@ for (const [day, name] of [["2026-10-05", "heavy"], ["2026-09-30", "no-observati
   check("chat: OCR answer embeds screenshots that load", img.ok > 0, JSON.stringify(img));
   await page.screenshot({ path: `${OUT}/10-chat-ocr.png` });
   check("chat: no errors", errors.length === 0, errors.slice(0, 2).join("; "));
+  await page.close();
+}
+
+// ---- English UI: the toggle switches pages and backend-generated text
+{
+  const page = await browser.newPage();
+  await page.goto(BASE + "/?t=today&lang=en", { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".tab", { timeout: 15000 });
+  await new Promise((r) => setTimeout(r, 2500));
+  const en = await page.evaluate(() => ({
+    tabs: [...document.querySelectorAll(".tab")].map((t) => t.textContent),
+    html: document.documentElement.lang,
+    cjk: (document.querySelector("header")?.textContent.match(/[\u4e00-\u9fff]/g) || []).join(""),
+  }));
+  check("i18n: ?lang=en renders English tabs", en.tabs.join(",") === "Today,Analytics,Sessions,Projects,Reports", en.tabs.join(","));
+  check("i18n: <html lang> follows", en.html === "en", en.html);
+  check("i18n: header has only the 中 toggle in CJK", en.cjk === "中", en.cjk);
+  const kpi = await page.evaluate(() => fetch("/api/v1/days").then((r) => r.json()).then((d) => fetch("/api/v1/today?day=" + d.days.at(-1)))
+    .then((r) => r.json()).then((t) => t.kpis[0].label));
+  check("i18n: backend writes English under the lang cookie", kpi === "Human active", kpi);
+  await page.click("header button[title='切换到中文']");
+  await new Promise((r) => setTimeout(r, 1500));
+  const zh = await page.$$eval(".tab", (t) => t.map((x) => x.textContent).join(","));
+  check("i18n: toggle switches back to Chinese", zh === "今日,分析,会话,项目,日报", zh);
   await page.close();
 }
 

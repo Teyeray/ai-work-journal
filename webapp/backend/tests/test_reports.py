@@ -52,3 +52,17 @@ def test_schedule_roundtrip_and_validation(env):
 
 def test_run_rejects_unknown_kind(env):
     assert TestClient(app).post("/api/v1/reports/run/monthly").status_code == 400
+
+
+def test_demo_never_touches_real_reports_data_or_pipeline(tmp_path):
+    import subprocess
+    import sys
+    code = ("from app import config, reports; import json; print(json.dumps([str(config.DATA_DIR), "
+            "str(config.REPORTS_DIR), str(reports.REPORTS), str(reports.SCHEDULE), reports.run_now('daily'), "
+            "reports.timer_status()['daily']['installed']]))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
+                         env={**{k: v for k, v in __import__("os").environ.items() if k != "JOURNAL_SCHEDULE_FILE"},
+                              "JOURNAL_DEMO": str(tmp_path)}).stdout
+    data, rep, rep2, sched, run, installed = __import__("json").loads(out)
+    assert all(x.startswith(str(tmp_path)) for x in (data, rep, rep2, sched))
+    assert run == {"started": False, "reason": "demo"} and installed is False

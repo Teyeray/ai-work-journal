@@ -16,9 +16,9 @@
 
 [**快速开始**](#-快速开始) · [功能](#-功能) · [屏幕 OCR](#-屏幕文字可插拔-ocr) · [平台支持](#-平台支持) · [配置](#%EF%B8%8F-配置) · [架构](#-架构) · [English](README.md)
 
-<img src="docs/images/today.png" alt="今日页" width="100%">
+<img src="docs/images/zh/today.png" alt="今日页" width="100%">
 
-<sub>截图都来自 <code>journal demo</code>，用的是合成数据。</sub>
+<sub>截图都来自 <code>journal demo</code>，用的是合成数据。界面支持中文和英文，在顶栏点 <b>EN / 中</b> 切换。</sub>
 
 </div>
 
@@ -49,21 +49,34 @@
   - agent 执行细线、▲ 你发的 prompt 和 ◆ 提交画在同一条轨道上，能看到你读论文的时候 agent 在做什么。
   - 工作段按证据命名，优先用提交，其次是有信息量的窗口标题，最后才是 prompt。
   - 鼠标悬停时读出那一秒：在哪个窗口、已经停留多久、从哪里切过来、哪些 agent 在跑。
+
+  <img src="docs/images/zh/timeline.png" alt="时间轴">
+
 - 📊 **会说明缺口的分析**
   - 各项指标都和上一个等长周期对比。
   - 没有窗口数据的日子会标出来，不会画成 0。
   - 每条洞察都附带依据和可信度。
   - 另有节奏热力图、专注长度分布，以及每个项目上你和 agent 各投入多少。
+
+  <img src="docs/images/zh/analytics.png" alt="分析页">
+
 - 🤖 **看得懂的 agent 会话**
   - 支持 Claude Code 和 pi，每个会话以你的第一条指令为标题。
   - 显示执行时长、指令数、工具调用数和 token。
   - 跨多天运行的长会话，按你选中的那一天来展示。
   - 可以只看自己发的指令，也可以按固定标准给会话做质量评审。
+
+  <img src="docs/images/zh/sessions.png" alt="会话页">
+
 - 🧭 **可解释、可修正的归类**
   - 每个窗口都标明归到某个项目的原因。判定依次看：标题里的路径、你的正则、关键词、会话目录、应用分类。
   - 规则都匹配不上的标题，可以交给 LLM 判断，只采用把握大的结果。
   - 新规则保存前可以先预览会影响多少窗口。
   - 人工修正只追加不覆盖，重新导入数据后依然有效。
+
+  <img src="docs/images/zh/projects.png" alt="项目页">
+
+- 🌐 **中英文界面**：顶栏一键切换所有页面，生成的洞察、状态提示和问 AI 的回答也跟着切换语言。
 - 📝 **日报和周报**：按模板由你的 LLM CLI 生成，可以推送到飞书。在网页上按星期几设置哪些天生成。
 - 💬 **问 AI（⌘/Ctrl+J）**
   - 带工具的对话，可以问「上周 atlas-api 有什么进展」「周二下午两点我在干嘛」这类问题。
@@ -72,6 +85,13 @@
 - 🖥️ **屏幕文字**：通过 screenpipe 或内置截屏搜索屏幕上出现过的文字，OCR 可以[接任意模型 API](#-屏幕文字可插拔-ocr)。
 - 🩺 **`journal doctor`**：一条命令检查采集器、OCR、密钥、工具和定时任务。
 - 🧪 **`journal demo`**：用两周的合成数据先体验，什么都不用装。
+
+<table>
+<tr>
+<td width="68%" valign="top"><img src="docs/images/zh/reports.png" alt="日报页"><br><sub>日报页：按星期几设置生成、浏览历史、推送飞书。</sub></td>
+<td width="32%" valign="top"><img src="docs/images/zh/day-picker.png" alt="日期热力日历"><br><sub>日期选择器是一张你在电脑前时长的热力日历。</sub></td>
+</tr>
+</table>
 
 ## 🚀 快速开始
 
@@ -213,9 +233,9 @@ flowchart LR
 ## 🧑‍💻 开发
 
 ```bash
-cd webapp/backend && ../.venv/bin/python -m pytest -q     # 101 个后端测试
+cd webapp/backend && ../.venv/bin/python -m pytest -q     # 105 个后端测试
 cd webapp/frontend && npm run dev                          # Vite 开发服务器
-node webapp/frontend/verify-today.mjs                      # 73 项真实浏览器验收(需服务在跑)
+node webapp/frontend/verify-today.mjs                      # 78 项真实浏览器验收(需服务在跑)
 ```
 
 ## 📄 许可

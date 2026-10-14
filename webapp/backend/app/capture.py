@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.request
 
+from .i18n import tr
 from . import config, db, ocr
 from .timeutil import iso, now_utc, now_iso
 
@@ -36,14 +37,14 @@ def support() -> tuple[bool, str]:
     if sysname == "linux":
         if os.environ.get("XDG_SESSION_TYPE") == "wayland" or (
                 os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY")):
-            return False, "Wayland 不允许普通程序读屏幕,请改用 screenpipe(走系统的屏幕共享授权)"
+            return False, tr("Wayland 不允许普通程序读屏幕,请改用 screenpipe(走系统的屏幕共享授权)", "Wayland doesn't let apps read the screen; use screenpipe (it goes through the system screen-share prompt)")
         if not os.environ.get("DISPLAY"):
-            return False, "没有图形显示(DISPLAY 未设置)"
+            return False, tr("没有图形显示(DISPLAY 未设置)", "No graphical display (DISPLAY is not set)")
     try:
         import mss  # noqa: F401
         from PIL import Image  # noqa: F401
     except ImportError:
-        return False, "缺少依赖:pip install mss pillow"
+        return False, tr("缺少依赖:", "Missing dependencies: ") + "pip install mss pillow"
     return True, ""
 
 
@@ -195,14 +196,14 @@ def status() -> dict:
         from .timeutil import parse_ts, tz
         v["last_frame"] = parse_ts(last["captured_at"]).astimezone(tz()).isoformat()
     if not ok:
-        v.update(state="down", reason=why, hint="在 webapp/config.json 关闭 capture.enabled,或换用 screenpipe")
+        v.update(state="down", reason=why, hint=tr("在 webapp/config.json 关闭 capture.enabled,或换用 screenpipe", "Turn off capture.enabled in webapp/config.json, or use screenpipe"))
     elif not running():
-        v.update(state="down", reason="截屏线程没有运行", hint="重启 journal web")
+        v.update(state="down", reason=tr("截屏线程没有运行", "The capture thread isn't running"), hint=tr("重启 journal web", "Restart journal web"))
     elif not ocr.is_api():
-        v.update(state="stalled", reason="截图在保存,但 OCR 引擎不是 API(ocr.engine)",
-                 hint="把 ocr.engine 设为 openai 或 http,并配置密钥")
+        v.update(state="stalled", reason=tr("截图在保存,但 OCR 引擎不是 API(ocr.engine)", "Screenshots are saved, but the OCR engine isn't an API (ocr.engine)"),
+                 hint=tr("把 ocr.engine 设为 openai 或 http,并配置密钥", "Set ocr.engine to openai or http and configure a key"))
     elif _S["last_error"]:
-        v.update(state="stalled", reason=f"OCR 失败:{_S['last_error']}", hint="检查 OCR 接口地址和密钥")
+        v.update(state="stalled", reason=tr("OCR 失败:", "OCR failed: ") + str(_S['last_error']), hint=tr("检查 OCR 接口地址和密钥", "Check the OCR endpoint and key"))
     return v
 
 

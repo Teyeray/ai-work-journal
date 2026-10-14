@@ -137,3 +137,33 @@ def test_cold_cache_concurrent_requests_do_not_conflict(env):
     for t in ts:
         t.join()
     assert codes == [200] * 6
+
+
+def test_lang_cookie_switches_generated_text_to_english(env, monkeypatch):
+    from app import chat
+    load_aw([aw_event(D, "09:00", 60)])
+    c = client()
+    zh = c.get(f"/api/v1/today?day={D}").json()
+    assert zh["kpis"][0]["label"] == "人类活跃时长"
+    c.cookies.set("lang", "en")
+    en = c.get(f"/api/v1/today?day={D}").json()
+    assert en["kpis"][0]["label"] == "Human active"
+    assert all(not any("一" <= ch <= "鿿" for ch in i["title"] + i["detail"].replace(D, ""))
+               for i in en["insights"])
+
+    monkeypatch.setattr(chat.config, "SP_URL", "http://sp")
+
+    def refuse():
+        raise ConnectionRefusedError()
+    monkeypatch.setattr(chat, "_sp_health", refuse)
+    chat._SP_STATUS.update(at=0, v=None, restarted_at=0)
+    assert c.get("/api/v1/screen/status").json()["reason"].startswith("screenpipe is not running")
+    c.cookies.set("lang", "zh")   # a cached status must not leak the other language
+    assert c.get("/api/v1/screen/status").json()["reason"].startswith("screenpipe 没有运行")
+    chat._SP_STATUS.update(at=0, v=None)
+
+
+def test_chat_answers_in_the_dashboard_language():
+    from app import chat
+    assert "英文(English)回答" in chat.system_prompt(lang="en")
+    assert "用中文" in chat.system_prompt(lang="zh")

@@ -1,4 +1,5 @@
 // API types matching backend responses (app/api.py)
+import { tr } from "./i18n";
 
 export interface Block {
   id: string;
@@ -444,17 +445,21 @@ export function isCategory(p: string): boolean {
 
 const APP_NAMES: Record<string, string> = {
   "com.mitchellh.ghostty": "Ghostty", "google-chrome": "Chrome", "zotero": "Zotero",
-  "org.gnome.nautilus": "文件", "jetbrains-pycharm": "PyCharm", "org.gnome.texteditor": "文本编辑器",
-  "org.gnome.ptyxis": "Ptyxis", "warp-taskbar": "任务栏", "org.gnome.settings": "设置",
-  "org.gnome.loupe": "图片查看器", "code": "VS Code", "firefox": "Firefox",
+  "jetbrains-pycharm": "PyCharm", "org.gnome.ptyxis": "Ptyxis", "code": "VS Code", "firefox": "Firefox",
+};
+const APP_NAMES_LOCAL: Record<string, [string, string]> = {
+  "org.gnome.nautilus": ["文件", "Files"], "org.gnome.texteditor": ["文本编辑器", "Text Editor"],
+  "warp-taskbar": ["任务栏", "Taskbar"], "org.gnome.settings": ["设置", "Settings"],
+  "org.gnome.loupe": ["图片查看器", "Image Viewer"],
 };
 
 /** Human name for an ActivityWatch app id. */
 export function appName(app: string): string {
   const a = (app || "").toLowerCase();
   if (APP_NAMES[a]) return APP_NAMES[a];
-  if (a.startsWith("chrome-") && a.endsWith("-default")) return "Chrome 应用";
-  if (!a) return "未知应用";
+  if (APP_NAMES_LOCAL[a]) return tr(...APP_NAMES_LOCAL[a]);
+  if (a.startsWith("chrome-") && a.endsWith("-default")) return tr("Chrome 应用", "Chrome app");
+  if (!a) return tr("未知应用", "Unknown app");
   const last = app.split(".").pop() || app;
   return last.charAt(0).toUpperCase() + last.slice(1);
 }
@@ -464,5 +469,5 @@ export function cleanTitle(title: string): string {
   return (title || "")
     .replace(/ - (Google Chrome|Zotero|Mozilla Firefox|Visual Studio Code)$/, "")
     .replace(/^π - /, "pi · ")
-    .trim() || "(无标题)";
+    .trim() || tr("(无标题)", "(untitled)");
 }

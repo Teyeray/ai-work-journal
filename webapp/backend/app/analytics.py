@@ -13,6 +13,7 @@ Definitions (shown to the user, so keep them simple and stable):
 import datetime as dt
 from collections import Counter, defaultdict
 
+from .i18n import tr
 from . import projects
 from .timeutil import parse_ts
 
@@ -164,9 +165,13 @@ def insights(days: list, cur: dict, prev: dict, table: list) -> list:
     n, n_obs = cur["days"], cur["observed_days"]
     conf = "高" if n_obs >= 10 else "中" if n_obs >= 5 else "低"
     if n_obs < n:
-        out.append({"kind": "quality", "title": f"{n} 天里只有 {n_obs} 天有窗口观察",
-                    "detail": "没有窗口数据的日子只计 Agent;人的时间、专注和切换只基于有观察的日子。"
-                              + ("样本太少,以下结论仅供参考。" if n_obs < 5 else ""),
+        out.append({"kind": "quality", "title": tr(f"{n} 天里只有 {n_obs} 天有窗口观察",
+                                                    f"Only {n_obs} of {n} days have window observations"),
+                    "detail": tr("没有窗口数据的日子只计 Agent;人的时间、专注和切换只基于有观察的日子。",
+                                 "Days without window data count agents only; your time, focus and switches "
+                                 "use observed days only. ")
+                              + (tr("样本太少,以下结论仅供参考。", "Too few days — treat the rest as indicative.")
+                                 if n_obs < 5 else ""),
                     "confidence": "高"})
     if not n_obs:
         return out
@@ -175,37 +180,46 @@ def insights(days: list, cur: dict, prev: dict, table: list) -> list:
     if proj:
         tot = sum(r["human_sec"] for r in proj)
         top = proj[0]
-        out.append({"kind": "projects", "title": f"投入最多:{top['project']} {top['human_sec'] / tot:.0%}",
-                    "detail": "项目时间中:" + "、".join(f"{r['project']} {r['human_sec'] / 3600:.1f}h"
+        out.append({"kind": "projects", "title": tr("投入最多:", "Most time: ") + f"{top['project']} {top['human_sec'] / tot:.0%}",
+                    "detail": tr("项目时间中:", "Of project time: ") + tr("、", ", ").join(f"{r['project']} {r['human_sec'] / 3600:.1f}h"
                                                    for r in proj[:4]), "confidence": conf})
         pri = [r for r in proj if r["priority"] is not None and r["priority"] <= 2]
         if pri:
             share = sum(r["human_sec"] for r in pri) / tot
-            out.append({"kind": "priority", "title": f"高优先级项目占项目时间 {share:.0%}",
-                        "detail": "P1/P2:" + "、".join(r["project"] for r in pri), "confidence": conf})
+            out.append({"kind": "priority", "title": tr(f"高优先级项目占项目时间 {share:.0%}", f"High-priority projects take {share:.0%} of project time"),
+                        "detail": "P1/P2: " + tr("、", ", ").join(r["project"] for r in pri), "confidence": conf})
         else:
-            out.append({"kind": "priority", "title": "还没有设置项目优先级",
-                        "detail": "在「项目」页把重要项目设为 P1/P2,就能看投入是否和优先级一致。",
+            out.append({"kind": "priority", "title": tr("还没有设置项目优先级", "No project priorities set yet"),
+                        "detail": tr("在「项目」页把重要项目设为 P1/P2,就能看投入是否和优先级一致。",
+                                     "Mark important projects P1/P2 on the Projects page to see whether your time matches."),
                         "confidence": "高"})
     if cur["focus_share"] is not None:
         f = cur["focus_share"]
         d = ""
         if prev and prev.get("focus_share") is not None and prev["observed_days"]:
             delta = f - prev["focus_share"]
-            d = f",比上一周期{'高' if delta >= 0 else '低'} {abs(delta) * 100:.0f} 个百分点"
-        out.append({"kind": "focus", "title": f"{f:.0%} 的项目时间在 ≥30 分钟的连续段里{d}",
-                    "detail": "连续段 = 一直在同一项目泳道,短于 1 分钟的瞥一眼不打断,离开超过 5 分钟才断开。",
+            d = tr(f",比上一周期{'高' if delta >= 0 else '低'} {abs(delta) * 100:.0f} 个百分点",
+                   f", {abs(delta) * 100:.0f} pts {'up' if delta >= 0 else 'down'} on the previous period")
+        out.append({"kind": "focus", "title": tr(f"{f:.0%} 的项目时间在 ≥30 分钟的连续段里{d}",
+                                                  f"{f:.0%} of project time was in runs of ≥30 min{d}"),
+                    "detail": tr("连续段 = 一直在同一项目泳道,短于 1 分钟的瞥一眼不打断,离开超过 5 分钟才断开。",
+                                 "A run stays in one project lane; glances under 1 min don't break it, "
+                                 "being away over 5 min does."),
                     "confidence": conf})
     hours = [sum(d["hourly_switches"][h] for d in days) for h in range(24)]
     if sum(hours) >= 10:
         h = max(range(24), key=lambda i: hours[i])
-        out.append({"kind": "switch", "title": f"{h:02d}:00–{h + 1:02d}:00 切换最频繁",
-                    "detail": f"这一小时共 {hours[h]} 次项目切换(全周期 {sum(hours)} 次)。",
+        out.append({"kind": "switch", "title": f"{h:02d}:00–{h + 1:02d}:00" + tr(" 切换最频繁", " has the most switching"),
+                    "detail": tr(f"这一小时共 {hours[h]} 次项目切换(全周期 {sum(hours)} 次)。",
+                                 f"{hours[h]} project switches in this hour ({sum(hours)} over the period)."),
                     "confidence": conf})
     lev = [r for r in proj if r["human_sec"] >= 1800 and r["agent_sec"] > 0]
     if lev:
         best = max(lev, key=lambda r: r["agent_sec"] / r["human_sec"])
-        out.append({"kind": "leverage", "title": f"{best['project']}:你的 1 小时对应 Agent {best['agent_sec'] / best['human_sec']:.1f} 小时",
-                    "detail": "Agent 时间按执行段去重;比值高说明更多工作交给了 agent。",
+        x = best['agent_sec'] / best['human_sec']
+        out.append({"kind": "leverage", "title": tr(f"{best['project']}:你的 1 小时对应 Agent {x:.1f} 小时",
+                                                     f"{best['project']}: {x:.1f} agent hours per hour of yours"),
+                    "detail": tr("Agent 时间按执行段去重;比值高说明更多工作交给了 agent。",
+                                 "Agent time is de-duplicated across parallel runs; a higher ratio means more was delegated."),
                     "confidence": conf})
     return out
