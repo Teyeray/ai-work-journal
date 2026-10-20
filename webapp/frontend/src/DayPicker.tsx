@@ -6,27 +6,27 @@ import { tr, label, locale } from "./i18n";
  *  shaded by how much you worked that day (one-hue sequential ramp). Stays the
  *  same size however many days have been recorded. */
 
-type DayInfo = { day: string; human_sec: number; agent_sec: number; has_observation: boolean; top: string[] };
+export type DayInfo = { day: string; human_sec: number; agent_sec: number; has_observation: boolean; top: string[] };
 
 // sequential, one hue light→dark (accent); text flips to white on the two darkest
-const RAMP = ["#e9ebfa", "#c5caf1", "#97a0e4", "#6872d4", "#424bab"];
-const STEPS = [3600, 3 * 3600, 5 * 3600, 7 * 3600]; // <1h, <3h, <5h, <7h, ≥7h of your time
+export const RAMP = ["#e9ebfa", "#c5caf1", "#97a0e4", "#6872d4", "#424bab"];
+export const STEPS = [3600, 3 * 3600, 5 * 3600, 7 * 3600]; // <1h, <3h, <5h, <7h, ≥7h of your time
 
 const cache = new Map<string, Promise<Record<string, DayInfo>>>();
-const iso = (d: Date) => d.toLocaleDateString("sv");
-const addDays = (s: string, n: number) => { const d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return iso(d); };
-const monthKey = (s: string) => s.slice(0, 7);
-const shiftMonth = (m: string, n: number) => { const d = new Date(m + "-15T12:00:00"); d.setMonth(d.getMonth() + n); return iso(d).slice(0, 7); };
+export const iso = (d: Date) => d.toLocaleDateString("sv");
+export const addDays = (s: string, n: number) => { const d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return iso(d); };
+export const monthKey = (s: string) => s.slice(0, 7);
+export const shiftMonth = (m: string, n: number) => { const d = new Date(m + "-15T12:00:00"); d.setMonth(d.getMonth() + n); return iso(d).slice(0, 7); };
 
 /** The 6×7 grid of a month (Monday first). */
-function grid(m: string): string[] {
+export function grid(m: string): string[] {
   const first = new Date(m + "-01T12:00:00");
   const lead = (first.getDay() + 6) % 7;
   const start = addDays(m + "-01", -lead);
   return Array.from({ length: 42 }, (_, i) => addDays(start, i));
 }
 
-function loadMonth(m: string, fresh = false): Promise<Record<string, DayInfo>> {
+export function loadMonth(m: string, fresh = false): Promise<Record<string, DayInfo>> {
   if (!fresh && cache.has(m)) return cache.get(m)!;
   const g = grid(m);
   const p = api.analyticsTime(g[0], g[41]).then((r) => {
@@ -178,11 +178,11 @@ export function DayPicker({ value, days, onChange, hotkeys = false }: {
           <div className="mt-2 min-h-[34px] border-t border-neutral-100 pt-1.5 text-[11.5px] leading-snug">
             <div className="font-medium text-neutral-700">{fmtDay(hv)}</div>
             <div className="truncate text-neutral-500">
-              {!known.has(hv) ? tr("没有记录", "No records")
+              {!known.has(hv) ? tr("无记录", "No records")
                 : !hi ? "…"
                 : !hi.has_observation
-                  ? (hi.agent_sec > 0 ? tr(`未采集窗口 · agent 累加 ${fmtDur(hi.agent_sec)}`, `No window capture · agent total ${fmtDur(hi.agent_sec)}`) : tr("未采集窗口", "No window capture"))
-                  : tr(`你 ${fmtDur(hi.human_sec)} · agent 累加 ${fmtDur(hi.agent_sec)}`, `You ${fmtDur(hi.human_sec)} · agent total ${fmtDur(hi.agent_sec)}`) + (hi.top.length ? " · " + hi.top.map(label).join(tr("、", ", ")) : "")}
+                  ? (hi.agent_sec > 0 ? tr(`无窗口记录 · agent ${fmtDur(hi.agent_sec)}`, `No window data · agent ${fmtDur(hi.agent_sec)}`) : tr("无窗口记录", "No window data"))
+                  : tr(`你 ${fmtDur(hi.human_sec)} · agent ${fmtDur(hi.agent_sec)}`, `You ${fmtDur(hi.human_sec)} · agent ${fmtDur(hi.agent_sec)}`) + (hi.top.length ? " · " + hi.top.map(label).join(tr("、", ", ")) : "")}
             </div>
           </div>
 

@@ -314,7 +314,28 @@ body {
 .chat-input textarea { @apply max-h-40 min-h-[22px] flex-1 resize-none bg-transparent px-1 text-[13.5px] leading-[1.6] outline-none placeholder:text-neutral-400; }
 .chat-send { @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-neutral-900 text-[14px] font-bold text-white disabled:bg-neutral-200; }
 .chat-send.stop { @apply bg-neutral-700 text-[10px]; }
-.chat-foot { @apply flex shrink-0 gap-2 truncate px-4 pb-2 text-[11px] text-neutral-400; }
+.chat-foot { @apply flex shrink-0 items-center gap-2 px-4 pb-2 text-[11px] text-neutral-400; }
+.chat-model { @apply flex max-w-[180px] items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 disabled:cursor-default disabled:opacity-50; }
+.chat-model[aria-expanded="true"] { @apply bg-neutral-100 text-neutral-800; }
+.chat-model-caret { @apply text-[9px] text-neutral-400 transition-transform; }
+.chat-model-caret.open { transform: rotate(180deg); }
+.chat-model-pop {
+  @apply absolute right-0 bottom-[calc(100%+6px)] z-50 w-[248px] rounded-xl border border-neutral-200 bg-white p-1.5;
+  box-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.05);
+}
+.chat-model-group { @apply px-2 pt-1 pb-0.5 text-[10.5px] font-medium tracking-wide text-neutral-400 uppercase; }
+.chat-model-row { @apply flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[12.5px] text-neutral-700 outline-none hover:bg-neutral-100 focus-visible:bg-neutral-100; }
+.chat-model-row.on { @apply font-medium text-neutral-900; }
+.chat-model-check { @apply w-3 shrink-0 text-[11px] text-[var(--accent)]; }
+.chat-model-def { @apply shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-px text-[10.5px] font-medium text-[var(--accent)]; }
+.chat-model-setdef { @apply invisible shrink-0 rounded-md px-1.5 py-0.5 text-[10.5px] text-neutral-500 hover:bg-white hover:text-neutral-900 hover:shadow-sm; }
+.chat-model-row:hover .chat-model-setdef, .chat-model-row:focus-visible .chat-model-setdef { @apply visible; }
+.chat-ctx { @apply max-w-full truncate rounded px-1 py-0.5 text-left hover:bg-neutral-100 hover:text-neutral-700; }
+.dp-pop.chat-ctx-pop { top: auto; left: 0; bottom: calc(100% + 6px); width: 284px; }
+.chat-approve { @apply flex flex-col gap-1.5 border-t border-amber-200 bg-amber-50/70 px-2.5 py-2; }
+.chat-approve pre { @apply max-h-40 overflow-auto rounded-md bg-neutral-900 px-2.5 py-1.5 font-mono text-[11.5px] whitespace-pre-wrap break-all text-neutral-100; }
+.chat-approve-yes { @apply rounded-md bg-neutral-900 px-2.5 py-1 text-[12px] font-medium text-white hover:bg-neutral-700; }
+.chat-approve-no { @apply rounded-md border border-neutral-300 bg-white px-2.5 py-1 text-[12px] text-neutral-700 hover:bg-neutral-50; }
 
 /* ---------- day picker (month heat calendar) ---------- */
 .dp-trigger {

@@ -84,9 +84,13 @@ LLM_CLASSIFY_ENABLED = bool(LLM_CLASSIFY["enabled"] and LLM_API_KEY and LLM_BASE
                             and not os.environ.get("JOURNAL_LLM_DISABLE"))
 
 GIT_AUTHORS = list(_web_cfg.get("git_authors", []))
+
+# 问 AI: local files / shell (read-only runs directly, writes need approval) and the web
+CHAT = {"local_tools": True, "web": True, **_web_cfg.get("chat", {})}
+# this machine's overlay; the chat's "set as default" writes chat.default here
+WEB_LOCAL_CONFIG = WEBAPP_DIR / "config.local.json"
 # AFK shorter than this (reading, watching an agent work) still counts as your time
 AFK_MIN_SEC = int(_web_cfg.get("afk_min_minutes", 20)) * 60
-
 RUNNING_THRESHOLD_SEC = int(_web_cfg.get("running_threshold_sec", 1800))
 
 FRONTEND_DIST = WEBAPP_DIR / "frontend" / "dist"

@@ -112,7 +112,7 @@ Everything is stored in SQLite on your machine. Model calls (reports, chat, OCR)
 
 - 🌐 **English and Chinese UI.** One click in the header switches every page; generated insights, status messages and Ask AI answers follow the same language.
 - 📝 **Daily and weekly reports.** They are written from a template by your LLM CLI and optionally pushed to Feishu/Lark. Schedule them per weekday from the UI.
-- 💬 **Ask AI (⌘/Ctrl+J).** A tool-using chat over your history, for example "what did I ship on atlas-api last week?" or "what was I doing at 2pm on Tuesday?". It reads progressively: catalog first, then summaries, then rows, then raw text. Answers link to sessions, days and screenshots.
+- 💬 **Ask AI (⌘/Ctrl+J).** A tool-using chat over your history, for example "what did I ship on atlas-api last week?" or "what was I doing at 2pm on Tuesday?". It reads progressively: catalog first, then summaries, then rows, then raw text. Answers link to sessions, days and screenshots. Pick several days from the calendar in its footer as context. It can also read local code (`read_file`, `grep`, `list_dir`), run shell commands and search the web. Read-only commands run in a [bubblewrap](https://github.com/containers/bubblewrap) sandbox (read-only filesystem, no network, secret directories hidden); anything that could change files, and any web request after local files were read, waits for you to click Allow. Turn either off with `"chat": {"local_tools": false, "web": false}` in `webapp/config.json`. To pick the model per question from a dropdown in the panel footer, list the extra model ids your endpoint serves in `"chat": {"models": ["deepseek-v4-pro", "kimi-k3"]}`; the default stays `llm_classify.chat_model` (or `model`), which web search always uses.
 - 🖥️ **Screen text.** Search what was on screen, using [screenpipe](https://github.com/mediar-ai/screenpipe) or the built-in sampler, with [any OCR model behind an API](#-screen-text--pluggable-ocr).
 - 🩺 **`journal doctor`** checks collectors, OCR, keys, tools and the schedule.
 - 🧪 **`journal demo`** gives you a synthetic two weeks to explore before installing anything.
@@ -284,7 +284,7 @@ flowchart LR
   TL --> API[FastAPI + SSE]
   SP --> API
   API --> UI[React dashboard]
-  API --> CHAT[Ask AI<br/>12 read-only tools]
+  API --> CHAT[Ask AI<br/>journal, file, shell and web tools]
   DB --> REP[daily.py / weekly.py] --> LLM[your LLM CLI] --> MD[reports/*.md] --> FS
 ```
 
@@ -322,7 +322,7 @@ journal install             put `journal` on your PATH
 
 - **Local by default.** The server binds to `127.0.0.1`, and data stays in `data/` and your cache directory, both gitignored.
 - **Nothing is sent anywhere unless you configure an endpoint.** Each optional feature sends only this, and only to the endpoint you set:
-  - **Ask AI** sends the tool results it reads: window titles, session text, report text and OCR snippets.
+  - **Ask AI** sends the tool results it reads: window titles, session text, report text, OCR snippets, and the files or command output it looked at. Web searches go through the same endpoint's built-in search.
   - **LLM classification** sends de-duplicated window titles, plus project names, keywords and a few example titles per project.
   - **API OCR** sends screenshots.
 - Sensitive apps such as password managers are never captured by the built-in sampler.

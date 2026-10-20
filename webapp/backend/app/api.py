@@ -869,14 +869,40 @@ def reports_read(kind: str, name: str):
 
 class ChatIn(BaseModel):
     text: str
+    model: Optional[str] = None        # one of chat.models(); null = the default
     thread_id: Optional[int] = None    # null = start a new thread
     context: Optional[dict] = None
 
 
 @app.get("/api/v1/chat/status")
 def chat_status():
-    return {"available": chat.available(), "model": chat.model(),
-            "tools": [t["function"]["name"] for t in chat.TOOLS]}
+    return {"available": chat.available(), "model": chat.model(), "models": chat.models(),
+            "tools": [t["function"]["name"] for t in chat.tool_schemas()]}
+
+
+class DefaultModelIn(BaseModel):
+    model: str
+
+
+@app.post("/api/v1/chat/default")
+def chat_default(body: DefaultModelIn):
+    """Make a model the chat default (saved in webapp/config.local.json)."""
+    if not chat.set_default(body.model):
+        raise HTTPException(400, tr("不在可选列表里,或本机配置无法读取", "Not an offered model, or the local config is unreadable"))
+    return {"ok": True, "model": chat.model()}
+
+
+class ApproveIn(BaseModel):
+    token: str
+    allow: bool
+
+
+@app.post("/api/v1/chat/approve")
+def chat_approve(body: ApproveIn):
+    """Allow or deny a run_bash command the chat is waiting on."""
+    if not chat.approve(body.token, body.allow):
+        raise HTTPException(404, tr("没有等待批准的命令(可能已超时)", "No command is waiting (it may have timed out)"))
+    return {"ok": True}
 
 
 @app.get("/api/v1/chat/threads")
@@ -907,7 +933,7 @@ def chat_ask(body: ChatIn):
     lang = i18n.lang()   # the stream runs outside this request's context
 
     def gen():
-        for ev in chat.ask(body.text, body.thread_id, body.context, lang=lang):
+        for ev in chat.ask(body.text, body.thread_id, body.context, lang=lang, model_id=body.model):
             yield json.dumps(ev, ensure_ascii=False) + "\n"
     return StreamingResponse(gen(), media_type="application/x-ndjson",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})

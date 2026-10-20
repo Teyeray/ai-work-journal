@@ -82,6 +82,9 @@
   - 带工具的对话，可以问「上周 atlas-api 有什么进展」「周二下午两点我在干嘛」这类问题。
   - 渐进式查询：先看目录，再看概要、明细，最后才读原文。
   - 回答里的会话、日期和截图都是可以点的链接。
+  - 底部「上下文」可以在日历里多选日期（Shift 点选范围）。
+  - 能读本机代码（read_file / grep / list_dir）、执行命令、联网搜索。只读命令在 [bubblewrap](https://github.com/containers/bubblewrap) 沙箱里直接跑（只读文件系统、无网络、隐藏密钥目录）；会改动文件的命令，以及读过本机文件之后的联网请求，都要你点「允许」。在 `webapp/config.json` 里写 `"chat": {"local_tools": false, "web": false}` 可以关掉。
+  - 面板底部可以切换模型：在 `"chat": {"models": ["deepseek-v4-pro", "kimi-k3"]}` 里列出你的接口支持的其他模型。默认模型仍是 `llm_classify.chat_model`（没有就用 `model`），联网搜索固定用默认模型。
 - 🖥️ **屏幕文字**：通过 screenpipe 或内置截屏搜索屏幕上出现过的文字，OCR 可以[接任意模型 API](#-屏幕文字可插拔-ocr)。
 - 🩺 **`journal doctor`**：一条命令检查采集器、OCR、密钥、工具和定时任务。
 - 🧪 **`journal demo`**：用两周的合成数据先体验，什么都不用装。
@@ -204,7 +207,7 @@ flowchart LR
   CAP[内置截屏 → OCR API] --> DB
   DB --> TL[时间轴投影 / 归类] --> API[FastAPI + SSE] --> UI[React 看板]
   SP[screenpipe] --> API
-  API --> CHAT[问 AI · 12 个只读工具]
+  API --> CHAT[问 AI · 看板/文件/命令/联网工具]
   DB --> REP[daily.py / weekly.py] --> MD[reports/*.md] --> FS[飞书]
 ```
 
@@ -217,7 +220,7 @@ flowchart LR
 
   | 功能 | 发送的内容 |
   |---|---|
-  | 问 AI | 它查到的窗口标题、会话原文、报告原文和 OCR 片段 |
+  | 问 AI | 它查到的窗口标题、会话原文、报告原文、OCR 片段，以及它读过的文件和命令输出；联网搜索走同一接口自带的搜索 |
   | 语义归类 | 去重后的窗口标题，以及项目名、关键词和每个项目的少量示例标题 |
   | API OCR | 截图 |
 

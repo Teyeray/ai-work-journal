@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { tr } from "./i18n";
+import { tr, label, locale } from "./i18n";
+import { fmtDur } from "./api";
+import { type DayInfo, RAMP, STEPS, addDays, fmtDay, grid, iso, loadMonth, monthKey, shiftMonth } from "./DayPicker";
 
 /**
  * 问 AI: a side panel available on every tab. The backend runs a tool loop over
@@ -9,7 +11,7 @@ import { tr } from "./i18n";
  * component streams its NDJSON events and renders the steps and the answer.
  */
 
-export interface ChatCtx { tab?: string; day?: string; session_id?: number | null; view?: string }
+export interface ChatCtx { tab?: string; day?: string; session_id?: number | null; view?: string; days?: string[] }
 
 // pages publish what the user is looking at; sent with each question and shown in the footer
 const pageCtx: ChatCtx = {};
@@ -25,7 +27,8 @@ function usePageCtx() {
   return pageCtx;
 }
 
-interface Step { id: string; name: string; args: Record<string, unknown>; summary?: string | null; error?: string | null; ms?: number; done?: boolean }
+interface Approval { token: string; command: string; cwd: string; reason: string; decided?: boolean }
+interface Step { id: string; name: string; args: Record<string, unknown>; summary?: string | null; error?: string | null; ms?: number; done?: boolean; approval?: Approval }
 interface Turn { turn: number; question: string; steps: Step[]; answer: string; error?: string }
 interface Thread { id: number; title: string; updated_at: string }
 
@@ -34,6 +37,8 @@ const toolLabel = (name: string): string => ({
   get_day: tr("查看某天", "View a day"), get_windows: tr("窗口记录", "Window log"), find_sessions: tr("查找会话", "Find sessions"),
   read_session: tr("读会话", "Read session"), list_commits: tr("提交记录", "Commits"), screen_text: tr("屏幕 OCR", "Screen OCR"),
   feishu: tr("飞书记录", "Feishu records"), list_reports: tr("日报列表", "Report list"), read_report: tr("读日报", "Read report"),
+  read_file: tr("读文件", "Read file"), list_dir: tr("列目录", "List dir"), grep: tr("搜代码", "Grep"),
+  run_bash: tr("执行命令", "Run command"), web_search: tr("联网搜索", "Web search"), web_fetch: tr("读网页", "Fetch page"),
 } as Record<string, string>)[name] ?? name;
 
 const suggest = (tab: string): string[] => ({
@@ -75,17 +80,21 @@ function load<T>(k: string, d: T): T {
 }
 function save(k: string, v: unknown) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } }
 
-export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; onNavigate: (href: string) => void }) {
+export function ChatDock({ tab, day, days, onNavigate }: { tab: string; day: string; days: string[]; onNavigate: (href: string) => void }) {
   const [open, setOpen] = useState<boolean>(() => load("chat.open", false));
   const [wide, setWide] = useState<boolean>(() => load("chat.wide", false));
-  const [status, setStatus] = useState<{ available: boolean; model: string } | null>(null);
+  const [status, setStatus] = useState<{ available: boolean; model: string; models?: string[] } | null>(null);
+  const [pickedModel, setPickedModel] = useState<string>(() => load("chat.model", ""));
   const [threads, setThreads] = useState<Thread[]>([]);
   const [showHist, setShowHist] = useState(false);
   const [tid, setTid] = useState<number | null>(() => load("chat.thread", null));
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // days picked in the chat's own calendar; empty = follow the page's day
+  const [ctxDays, setCtxDays] = useState<string[]>(() => load("chat.days", []));
   const abort = useRef<AbortController | null>(null);
+  const pending = useRef(new Set<string>());
   const scroller = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   const stick = useRef(true);
@@ -101,11 +110,21 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
   }, [open, wide]);
   useEffect(() => save("chat.wide", wide), [wide]);
   useEffect(() => save("chat.thread", tid), [tid]);
+  useEffect(() => save("chat.days", ctxDays), [ctxDays]);
+  useEffect(() => save("chat.model", pickedModel), [pickedModel]);
+  // a model removed from the config falls back to the default
+  const modelId = status?.models?.includes(pickedModel) ? pickedModel : status?.model ?? "";
+  useEffect(() => {   // closing the tab denies whatever is waiting, so the server doesn't hold it
+    const h = () => pending.current.forEach((token) =>
+      navigator.sendBeacon("/api/v1/chat/approve", new Blob([JSON.stringify({ token, allow: false })], { type: "application/json" })));
+    window.addEventListener("pagehide", h);
+    return () => window.removeEventListener("pagehide", h);
+  }, []);
 
   const loadThreads = () => fetch("/api/v1/chat/threads").then((r) => r.json()).then((r) => setThreads(r.threads)).catch(() => {});
   useEffect(() => {
     if (!open) return;
-    if (!status) fetch("/api/v1/chat/status").then((r) => r.json()).then(setStatus).catch(() => setStatus({ available: false, model: "" }));
+    if (!status) fetch("/api/v1/chat/status").then((r) => r.json()).then(setStatus).catch(() => setStatus({ available: false, model: "", models: [] }));
     loadThreads();
   }, [open]); // eslint-disable-line
 
@@ -144,7 +163,7 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
     try {
       const r = await fetch("/api/v1/chat", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: ac.signal,
-        body: JSON.stringify({ text, thread_id: tid, context: { ...pageCtx } }),
+        body: JSON.stringify({ text, thread_id: tid, model: modelId || null, context: { ...pageCtx, ...(ctxDays.length ? { days: ctxDays } : {}) } }),
       });
       if (!r.ok || !r.body) throw new Error(r.status === 503 ? tr("LLM 未配置(需要 ~/.config/ai-work-journal/.env 里的百炼 key)", "LLM not configured (needs a Bailian key in ~/.config/ai-work-journal/.env)") : `HTTP ${r.status}`);
       const reader = r.body.getReader();
@@ -164,6 +183,10 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
           if (ev.type === "thread") setTid(ev.id);
           else if (ev.type === "delta") patchLast((t) => ({ ...t, answer: t.answer + ev.text }));
           else if (ev.type === "step") patchLast((t) => ({ ...t, steps: [...t.steps, { id: ev.id, name: ev.name, args: ev.args }] }));
+          else if (ev.type === "approval") {
+            pending.current.add(ev.token);
+            patchLast((t) => ({ ...t, steps: t.steps.map((s) => (s.id === ev.id ? { ...s, approval: { token: ev.token, command: ev.command, cwd: ev.cwd, reason: ev.reason } } : s)) }));
+          }
           else if (ev.type === "step_done") patchLast((t) => ({ ...t, steps: t.steps.map((s) => (s.id === ev.id ? { ...s, ...ev, done: true } : s)) }));
           else if (ev.type === "error") patchLast((t) => ({ ...t, error: ev.message }));
         }
@@ -174,8 +197,19 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
     } finally {
       setBusy(false);
       abort.current = null;
+      pending.current.clear();
       loadThreads();
     }
+  };
+
+  const decide = (token: string, allow: boolean) => {
+    pending.current.delete(token);
+    patchLast((t) => ({ ...t, steps: t.steps.map((s) => (s.approval?.token === token ? { ...s, approval: { ...s.approval, decided: true } } : s)) }));
+    fetch("/api/v1/chat/approve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, allow }) }).catch(() => {});
+  };
+  const stop = () => {   // a command waiting for approval is denied, so the server side ends too
+    pending.current.forEach((tk) => decide(tk, false));
+    abort.current?.abort();
   };
 
   const newChat = () => { if (busy) return; setTid(null); setTurns([]); setShowHist(false); box.current?.focus(); };
@@ -234,13 +268,13 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
           <Empty status={status} tab={tab} onPick={send} />
         )}
         {turns.map((t, i) => (
-          <TurnView key={t.turn} t={t} live={busy && i === turns.length - 1} onRetry={() => send(t.question)} />
+          <TurnView key={t.turn} t={t} live={busy && i === turns.length - 1} onRetry={() => send(t.question)} onDecide={decide} />
         ))}
       </div>
 
       <form className="chat-input" onSubmit={(e) => { e.preventDefault(); send(input); }}>
         <textarea ref={box} value={input} rows={Math.min(6, Math.max(1, input.split("\n").length))}
-          placeholder={status && !status.available ? tr("LLM 未配置", "LLM not configured") : tr("问关于你工作的任何事…  Enter 发送,Shift+Enter 换行", "Ask anything about your work…  Enter to send, Shift+Enter for newline")}
+          placeholder={status && !status.available ? tr("LLM 未配置", "LLM not configured") : tr("问点什么…", "Ask anything…")}
           disabled={status ? !status.available : false}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -248,12 +282,19 @@ export function ChatDock({ tab, day, onNavigate }: { tab: string; day: string; o
             if (e.key === "Escape") setOpen(false);
           }} />
         {busy
-          ? <button type="button" className="chat-send stop" onClick={() => abort.current?.abort()} title={tr("停止", "Stop")}>■</button>
+          ? <button type="button" className="chat-send stop" onClick={stop} title={tr("停止", "Stop")}>■</button>
           : <button type="submit" className="chat-send" disabled={!input.trim()} title={tr("发送", "Send")}>↑</button>}
       </form>
       <div className="chat-foot">
-        {pageCtx.tab && <span>{tr("上下文:", "Context: ")}{pageCtx.tab} · {pageCtx.day}{pageCtx.session_id ? ` · ${tr("会话", "session")} #${pageCtx.session_id}` : ""}</span>}
-        {status?.model && <span className="ml-auto">{status.model}</span>}
+        <ContextDays sel={ctxDays} onChange={setCtxDays} known={days} pageDay={day}
+          label={ctxDays.length ? undefined : `${pageCtx.tab ?? ""} · ${pageCtx.day ?? day}${pageCtx.session_id ? ` · ${tr("会话", "session")} #${pageCtx.session_id}` : ""}`} />
+        {status?.model && ((status.models?.length ?? 0) > 1
+          ? <ModelMenu models={status.models!} current={modelId} def={status.model} disabled={busy}
+              onPick={(m) => setPickedModel(m === status.model ? "" : m)}
+              onDefault={(m) => fetch("/api/v1/chat/default", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: m }) })
+                .then((r) => (r.ok ? r.json() : Promise.reject())).then((r) => { setStatus((st) => (st ? { ...st, model: r.model } : st)); setPickedModel(""); })
+                .catch(() => {})} />
+          : <span className="ml-auto shrink-0">{status.model}</span>)}
       </div>
     </section>
   );
@@ -266,10 +307,9 @@ function Empty({ status, tab, onPick }: { status: { available: boolean } | null;
   }
   return (
     <div className="px-1 pt-6">
-      <div className="text-[15px] font-semibold text-neutral-800">{tr("问问你自己的工作", "Ask about your own work")}</div>
+      <div className="text-[15px] font-semibold text-neutral-800">{tr("问 AI", "Ask AI")}</div>
       <p className="mt-1.5 text-[12.5px] leading-relaxed text-neutral-500">
-        {tr("我能查到你的窗口记录、agent 会话原文、git 提交、项目设定、屏幕 OCR、飞书摘录和日报。先看概要,需要时再读原文。",
-          "I can look up your window log, agent session transcripts, git commits, project settings, screen OCR, Feishu excerpts and reports. I start with summaries and read the full text when needed.")}
+        {tr("工作记录 · 本地代码 · 命令 · 联网", "Work history · local code · shell · web")}
       </p>
       <div className="mt-4 flex flex-col gap-1.5">
         {suggest(tab).map((q) => (
@@ -280,14 +320,14 @@ function Empty({ status, tab, onPick }: { status: { available: boolean } | null;
   );
 }
 
-function TurnView({ t, live, onRetry }: { t: Turn; live: boolean; onRetry: () => void }) {
+function TurnView({ t, live, onRetry, onDecide }: { t: Turn; live: boolean; onRetry: () => void; onDecide: (token: string, allow: boolean) => void }) {
   const html = useMemo(() => md(t.answer), [t.answer]);
   const [copied, setCopied] = useState(false);
   const thinking = live && !t.answer && t.steps.every((s) => s.done);
   return (
     <div className="chat-turn">
       <div className="chat-q">{t.question}</div>
-      {t.steps.length > 0 && <Steps steps={t.steps} live={live} />}
+      {t.steps.length > 0 && <Steps steps={t.steps} live={live} onDecide={onDecide} />}
       {thinking && <div className="chat-thinking"><span /><span /><span /></div>}
       {t.answer && <div className={`md chat-md ${live ? "live" : ""}`} dangerouslySetInnerHTML={{ __html: html }} />}
       {t.error && (
@@ -305,9 +345,9 @@ function TurnView({ t, live, onRetry }: { t: Turn; live: boolean; onRetry: () =>
   );
 }
 
-function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
+function Steps({ steps, live, onDecide }: { steps: Step[]; live: boolean; onDecide: (token: string, allow: boolean) => void }) {
   const [open, setOpen] = useState(false);
-  const show = open || live;
+  const show = open || live || steps.some((s) => s.approval && !s.approval.decided && !s.done);
   const n = steps.length;
   return (
     <div className="chat-steps">
@@ -321,7 +361,18 @@ function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
           <span className={`chat-dot ${s.done ? (s.error ? "err" : "ok") : "run"}`} />
           <span className="font-medium text-neutral-700">{toolLabel(s.name)}</span>
           <span className="truncate text-neutral-400">{argText(s.args)}</span>
-          <span className={`ml-auto shrink-0 ${s.error ? "text-red-500" : "text-neutral-500"}`}>{s.error ? tr("出错", "Error") : s.summary ?? ""}</span>
+          <span className={`ml-auto shrink-0 ${s.error ? "text-red-500" : "text-neutral-500"}`}>{s.error ? (s.approval ? tr("未执行", "Not run") : tr("出错", "Error")) : s.summary ?? ""}</span>
+        </div>
+      ))}
+      {steps.filter((s) => s.approval && !s.approval.decided && !s.done).map((s) => (
+        <div key={s.id + "-ok"} className="chat-approve">
+          <div className="text-[11.5px] text-amber-800">{tr("需要你批准:", "Needs your approval: ")}<span className="text-amber-700/80">{s.approval!.reason}</span></div>
+          <pre>{s.approval!.command}</pre>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-500">{s.approval!.cwd && tr("目录 ", "in ") + s.approval!.cwd}</span>
+            <button className="chat-approve-no" onClick={() => onDecide(s.approval!.token, false)}>{tr("拒绝", "Deny")}</button>
+            <button className="chat-approve-yes" onClick={() => onDecide(s.approval!.token, true)}>{tr("允许执行", "Allow")}</button>
+          </div>
         </div>
       ))}
     </div>
@@ -338,5 +389,171 @@ function Spark() {
     <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden className="shrink-0 text-[var(--accent)]">
       <path fill="currentColor" d="M8 0l1.7 5.1L15 7l-5.3 1.9L8 14l-1.7-5.1L1 7l5.3-1.9z" />
     </svg>
+  );
+}
+
+/** Footer context: the page's day by default, or several days picked from a
+ *  month calendar (click toggles a day, shift-click selects a range). */
+function ContextDays({ sel, onChange, known, pageDay, label: pageLabel }: {
+  sel: string[]; onChange: (d: string[]) => void; known: string[]; pageDay: string; label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(monthKey(sel[sel.length - 1] ?? pageDay));
+  const [info, setInfo] = useState<Record<string, DayInfo>>({});
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const has = useMemo(() => new Set(known), [known]);
+  const picked = useMemo(() => new Set(sel), [sel]);
+  const today = iso(new Date());
+
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    loadMonth(month, month === monthKey(today)).then((r) => { if (live) setInfo((o) => ({ ...o, ...r })); });
+    return () => { live = false; };
+  }, [open, month]); // eslint-disable-line
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (root.current && !root.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+
+  const span = (a: string, b: string) => {
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    const out: string[] = [];
+    for (let d = lo; d <= hi; d = addDays(d, 1)) if (has.has(d)) out.push(d);
+    return out;
+  };
+  const click = (d: string, shift: boolean) => {
+    if (shift && anchor) onChange([...new Set([...sel, ...span(anchor, d)])].sort());
+    else onChange(picked.has(d) ? sel.filter((x) => x !== d) : [...sel, d].sort());
+    setAnchor(d);
+  };
+  const mon = addDays(today, -((new Date().getDay() + 6) % 7));
+  const presets: [string, string[]][] = [
+    [tr("本周", "This week"), span(mon, today)],
+    [tr("上周", "Last week"), span(addDays(mon, -7), addDays(mon, -1))],
+    [tr("近 7 天", "Last 7 days"), span(addDays(today, -6), today)],
+    [tr("近 30 天", "Last 30 days"), span(addDays(today, -29), today)],
+  ];
+  const shade = (d?: DayInfo) => {
+    if (!d || !d.has_observation) return null;
+    let i = 0;
+    while (i < STEPS.length && d.human_sec >= STEPS[i]) i++;
+    return i;
+  };
+  const tot = sel.reduce((n, d) => n + (info[d]?.human_sec ?? 0), 0);
+  const summary = !sel.length ? "" : sel.length === 1 ? fmtDay(sel[0])
+    : tr(`${sel.length} 天 · ${sel[0].slice(5)}~${sel[sel.length - 1].slice(5)}`, `${sel.length} days · ${sel[0].slice(5)}–${sel[sel.length - 1].slice(5)}`);
+
+  return (
+    <div ref={root} className="relative min-w-0">
+      <button className="chat-ctx" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        title={tr("选择对话的上下文日期(可多选)", "Pick the days this chat is about (multi-select)")}>
+        {tr("上下文:", "Context: ")}<span className={sel.length ? "font-medium text-[var(--accent)]" : ""}>{sel.length ? summary : pageLabel}</span> ▾
+      </button>
+      {open && (
+        <div className="dp-pop chat-ctx-pop" role="dialog" aria-label={tr("上下文日期", "Context days")}>
+          <div className="flex items-center gap-1">
+            <button className="icon-btn h-6 w-6" onClick={() => setMonth(shiftMonth(month, -1))} title={tr("上个月", "Previous month")}>‹</button>
+            <div className="min-w-[84px] text-center text-[13px] font-medium text-neutral-800">
+              {tr(`${+month.slice(0, 4)}年${+month.slice(5)}月`, new Date(month + "-15T12:00:00").toLocaleDateString(locale(), { year: "numeric", month: "short" }))}
+            </div>
+            <button className="icon-btn h-6 w-6" disabled={month >= monthKey(today)} onClick={() => setMonth(shiftMonth(month, 1))} title={tr("下个月", "Next month")}>›</button>
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {presets.map(([name, ds]) => (
+              <button key={name} className="dp-chip border border-neutral-200" disabled={!ds.length} onClick={() => { onChange(ds); setAnchor(null); }}>{name}</button>
+            ))}
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-[3px]">
+            {(tr("一,二,三,四,五,六,日", "M,T,W,T,F,S,S")).split(",").map((w, wi) => (
+              <div key={wi} className="pb-0.5 text-center text-[10.5px] text-neutral-400">{w}</div>
+            ))}
+            {grid(month).map((d) => {
+              const di = info[d], s = shade(di), ok = has.has(d);
+              const cls = ["dp-cell", monthKey(d) !== month && "out", !ok && "off", picked.has(d) && "sel",
+                d === today && "today", ok && di && !di.has_observation && di.agent_sec > 0 && "agent"].filter(Boolean).join(" ");
+              return (
+                <button key={d} className={cls} disabled={!ok} aria-pressed={picked.has(d)} aria-label={d}
+                  title={di ? tr(`你 ${fmtDur(di.human_sec)} · agent ${fmtDur(di.agent_sec)}`, `You ${fmtDur(di.human_sec)} · agent ${fmtDur(di.agent_sec)}`) + (di.top.length ? " · " + di.top.map(label).join(", ") : "") : d}
+                  style={s != null ? { background: RAMP[s], color: s >= 3 ? "#fff" : undefined } : undefined}
+                  onClick={(e) => click(d, e.shiftKey)}>
+                  {+d.slice(8)}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex items-center gap-2 border-t border-neutral-100 pt-1.5 text-[11.5px] text-neutral-500">
+            <span className="min-w-0 flex-1 truncate">
+              {sel.length ? tr(`已选 ${sel.length} 天`, `${sel.length} day${sel.length > 1 ? "s" : ""} selected`) + (tot ? ` · ${tr("你", "you")} ${fmtDur(tot)}` : "")
+                : tr("Shift 选范围", "Shift-click for range")}
+            </span>
+            {sel.length > 0 && <button className="dp-chip" onClick={() => { onChange([]); setAnchor(null); }}>{tr("清空", "Clear")}</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const VENDORS: [RegExp, string][] = [[/qwen/i, "Qwen"], [/deepseek/i, "DeepSeek"], [/kimi|moonshot/i, "Kimi"],
+  [/glm/i, "GLM"], [/minimax/i, "MiniMax"], [/gpt|^o\d/i, "OpenAI"], [/claude/i, "Claude"], [/gemini/i, "Gemini"]];
+const vendor = (m: string) => VENDORS.find(([re]) => re.test(m))?.[1] ?? "";
+const shortName = (m: string) => m.replace(/^[^/]+\//, "");
+
+/** Footer model picker: a list grouped by vendor; the pick is remembered in this
+ *  browser, "set as default" is saved on the server for every device. */
+function ModelMenu({ models, current, def, disabled, onPick, onDefault }: {
+  models: string[]; current: string; def: string; disabled: boolean;
+  onPick: (m: string) => void; onDefault: (m: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (root.current && !root.current.contains(e.target as Node)) setOpen(false); };
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", h);
+    document.addEventListener("keydown", k);
+    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
+  }, [open]);
+  const groups = useMemo(() => {
+    const g = new Map<string, string[]>();
+    for (const m of models) { const v = vendor(m); g.set(v, [...(g.get(v) ?? []), m]); }
+    return [...g.entries()];
+  }, [models]);
+
+  return (
+    <div ref={root} className="relative ml-auto shrink-0">
+      <button className="chat-model" disabled={disabled} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen((o) => !o)} title={tr("切换模型", "Switch model")}>
+        <span className="truncate">{shortName(current)}</span>
+        <span className={`chat-model-caret ${open ? "open" : ""}`}>▾</span>
+      </button>
+      {open && (
+        <div className="chat-model-pop" role="menu">
+          {groups.map(([v, ms]) => (
+            <div key={v || "other"} className="py-1 first:pt-0.5">
+              {v && <div className="chat-model-group">{v}</div>}
+              {ms.map((m) => (
+                <div key={m} role="menuitemradio" aria-checked={m === current} tabIndex={0}
+                  className={`chat-model-row ${m === current ? "on" : ""}`}
+                  onClick={() => { onPick(m); setOpen(false); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") { onPick(m); setOpen(false); } }}>
+                  <span className="chat-model-check">{m === current ? "✓" : ""}</span>
+                  <span className="min-w-0 flex-1 truncate">{shortName(m)}</span>
+                  {m === def
+                    ? <span className="chat-model-def">{tr("默认", "Default")}</span>
+                    : <button className="chat-model-setdef" onClick={(e) => { e.stopPropagation(); onDefault(m); }}>
+                        {tr("设为默认", "Set default")}</button>}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

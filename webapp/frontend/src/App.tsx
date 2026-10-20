@@ -109,7 +109,7 @@ export default function App() {
       {tab === "analytics" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Analytics days={days.length ? days : [day]} goDay={(d) => goTab("today", d)} /></div>}
       {tab === "sessions" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Sessions day={day} days={days} focusId={focusSession} /></div>}
       {tab === "projects" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Projects /></div>}
-      <ChatDock tab={tab} day={day} onNavigate={navigate} />
+      <ChatDock tab={tab} day={day} days={days} onNavigate={navigate} />
       {tab === "reports" && <div className="mx-auto max-w-[1600px] px-6 py-5"><Reports focus={focusReport} /></div>}
       </div>
     </div>

