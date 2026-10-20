@@ -58,7 +58,7 @@ export function Projects() {
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{tr("项目", "Projects")}</h1>
           <span className="text-[12.5px] text-neutral-500">
-            {tr("近 30 天的投入与产出;展开「归类规则」决定哪些窗口、会话算作这个项目(路径 → 正则 → 关键词 → 语义判断 → 上下文)。改动后所有日期自动重算。", "Effort and output over the last 30 days; expand \"Classification rules\" to decide which windows and sessions count toward a project (path → regex → keyword → semantic → context). All dates are recomputed after a change.")}
+            {tr("近 30 天", "Last 30 days")}
           </span>
         </div>
         {err && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">{err}</div>}
@@ -66,7 +66,7 @@ export function Projects() {
         {quiet.length > 0 && (
           <div className="pt-1">
             <button className="link text-[12.5px]" onClick={() => setShowQuiet(!showQuiet)}>
-              {showQuiet ? "▾" : "▸"} {tr(`近 30 天没有活动的项目 ${quiet.length} 个`, `${quiet.length} ${quiet.length === 1 ? "project" : "projects"} with no activity in 30 days`)}
+              {showQuiet ? "▾" : "▸"} {tr(`30 天无活动 · ${quiet.length}`, `Inactive 30 days · ${quiet.length}`)}
             </button>
             {showQuiet && <div className="mt-2 space-y-3">{quiet.map((p) => <ProjectCard key={p.id} p={p} names={names} onRules={saveRules} onReload={load} days={[]} />)}</div>}
           </div>
@@ -82,7 +82,7 @@ export function Projects() {
         {hidden.length > 0 && (
           <div className="pt-2">
             <button className="link text-[12.5px]" onClick={() => setShowHidden(!showHidden)}>
-              {showHidden ? "▾" : "▸"} {tr(`已隐藏 ${hidden.length} 个(旧规则把应用名误当成的项目)`, `${hidden.length} hidden (apps mistaken for projects by old rules)`)}
+              {showHidden ? "▾" : "▸"} {tr(`已隐藏 · ${hidden.length}`, `Hidden · ${hidden.length}`)}
             </button>
             {showHidden && (
               <div className="mt-2 flex flex-wrap gap-2">
@@ -150,11 +150,11 @@ function ProjectCard({ p, names, onRules, onReload, compact, stat, days }: {
         <div className="mt-2 text-[12.5px]">
           {goal == null ? (
             <button className="text-left text-neutral-500 hover:text-neutral-800" onClick={() => setGoal(p.goals_json ?? "")}>
-              {p.goals_json ? <>{tr("目标:", "Goal: ")}<span className="text-neutral-700">{p.goals_json}</span></> : <span className="text-neutral-400">{tr("+ 写下当前目标", "+ Write the current goal")}</span>}
+              {p.goals_json ? <>{tr("目标:", "Goal: ")}<span className="text-neutral-700">{p.goals_json}</span></> : <span className="text-neutral-400">{tr("+ 目标", "+ Goal")}</span>}
             </button>
           ) : (
             <div className="flex gap-2">
-              <input autoFocus value={goal} onChange={(e) => setGoal(e.target.value)} className="input h-7 flex-1 text-[12.5px]" placeholder={tr("这个项目当前要达成什么", "What this project is aiming for now")}
+              <input autoFocus value={goal} onChange={(e) => setGoal(e.target.value)} className="input h-7 flex-1 text-[12.5px]" placeholder={tr("当前目标", "Current goal")}
                 onKeyDown={async (e) => {
                   if (e.key === "Escape") setGoal(null);
                   if (e.key === "Enter") { await api.patchProject(p.id, { goals_json: goal.trim() || null }); setGoal(null); onReload(); }
@@ -168,7 +168,7 @@ function ProjectCard({ p, names, onRules, onReload, compact, stat, days }: {
 
       <div className="mt-2 border-t border-neutral-100 pt-2">
         <button className="text-[12.5px] font-medium text-neutral-600 hover:text-neutral-900" onClick={() => setOpen(!open)}>
-          {open ? "▾" : "▸"} {tr("归类规则", "Classification rules")} <span className="font-normal text-neutral-400">· {tr(`${nRules} 条`, `${nRules} ${nRules === 1 ? "rule" : "rules"}`)}{p.discovered ? tr(" · 目录自动登记", " · auto-registered from directory") : ""}</span>
+          {open ? "▾" : "▸"} {tr("归类规则", "Classification rules")} <span className="font-normal text-neutral-400">· {tr(`${nRules} 条`, `${nRules} ${nRules === 1 ? "rule" : "rules"}`)}{p.discovered ? tr(" · 自动", " · auto") : ""}</span>
         </button>
         {open && (
           <div className="mt-2 space-y-1.5">
@@ -178,7 +178,7 @@ function ProjectCard({ p, names, onRules, onReload, compact, stat, days }: {
                 <option value="">{tr("独立项目", "Standalone project")}</option>
                 {names.filter((n) => n !== p.name).map((n) => <option key={n} value={n}>{tr("计入", "Counts toward")} {n}</option>)}
               </select>
-              <label className="tl-check" title={tr("忽略:不再把任何窗口归到它", "Ignore: never file any window under it")}>
+              <label className="tl-check" title={tr("不再归入任何窗口", "Never file windows here")}>
                 <input type="checkbox" checked={r.ignore} onChange={(e) => set({ ignore: e.target.checked })} />{tr("忽略", "Ignore")}
               </label>
               <button className="link text-[12px]" title={tr("从列表隐藏这个项目", "Hide this project from the list")}
@@ -186,10 +186,10 @@ function ProjectCard({ p, names, onRules, onReload, compact, stat, days }: {
             </div>
             {!r.ignore && (<>
               <RuleRow kind="alias" values={r.aliases.filter((a) => a.toLowerCase() !== p.name.toLowerCase())} implicit={p.name}
-                onChange={(v) => set({ aliases: v })} placeholder={tr("添加关键词,如 超声、CATL", "Add keywords, e.g. ultrasound, CATL")} />
+                onChange={(v) => set({ aliases: v })} placeholder={tr("添加关键词", "Add keyword")} />
               <RuleRow kind="path" values={r.paths} onChange={(v) => set({ paths: v })} placeholder={tr("添加目录", "Add directory")} mono />
               {r.patterns.length > 0 || showPat ? (
-                <RuleRow kind="pattern" values={r.patterns} onChange={(v) => set({ patterns: v })} placeholder={tr("正则,如 (?i)harness.*bench", "Regex, e.g. (?i)harness.*bench")} mono />
+                <RuleRow kind="pattern" values={r.patterns} onChange={(v) => set({ patterns: v })} placeholder={tr("正则", "Regex")} mono />
               ) : (
                 <button className="link ml-[54px] text-[11.5px]" onClick={() => setShowPat(true)}>{tr("+ 正则规则", "+ Regex rule")}</button>
               )}
@@ -304,8 +304,8 @@ function Unclassified({ rows, projects, allProjects, onApplied }: {
   return (
     <div className="card">
       <div className="border-b border-neutral-100 px-4 pb-2.5 pt-3">
-        <h3 className="text-[14px] font-semibold text-neutral-900">{tr("未归类的窗口 · 近 14 天", "Unclassified windows · last 14 days")}</h3>
-        <div className="mt-0.5 text-[12px] text-neutral-500">{tr(`前 ${rows.length} 组共 ${fmtDur(total)};点一行把它和类似窗口归到某个项目`, `Top ${rows.length} ${rows.length === 1 ? "group" : "groups"}, ${fmtDur(total)} in total; click a row to file it and similar windows under a project`)}</div>
+        <h3 className="text-[14px] font-semibold text-neutral-900">{tr("未归类窗口 · 14 天", "Unclassified · 14 days")}</h3>
+        <div className="mt-0.5 text-[12px] text-neutral-500">{tr(`前 ${rows.length} 组 · ${fmtDur(total)}`, `Top ${rows.length} · ${fmtDur(total)}`)}</div>
       </div>
       <div className="thin-scroll max-h-[calc(100vh-300px)] overflow-y-auto px-2 py-1.5">
         {rows.map((w, i) => (
@@ -324,7 +324,7 @@ function Unclassified({ rows, projects, allProjects, onApplied }: {
             )}
           </div>
         ))}
-        {!rows.length && <div className="px-2 py-6 text-[12.5px] text-neutral-400">{tr("近 14 天的窗口都已归类。", "All windows from the last 14 days are classified.")}</div>}
+        {!rows.length && <div className="px-2 py-6 text-[12.5px] text-neutral-400">{tr("全部已归类", "All classified")}</div>}
       </div>
     </div>
   );
@@ -381,7 +381,7 @@ function AssignForm({ w, projects, allProjects, onDone }: {
       </div>
       {prev && (
         <div className="rounded-md border border-neutral-200 bg-white px-2.5 py-2 text-[12px] text-neutral-600">
-          {prev.windows === 0 ? tr("近 14 天没有窗口会因此改变,换个关键词试试。", "No windows in the last 14 days would change; try another keyword.") : (<>
+          {prev.windows === 0 ? tr("无窗口受影响", "No windows affected") : (<>
             {getLang() === "en"
               ? <>Will move <b className="text-neutral-900">{prev.windows}</b> {prev.windows === 1 ? "window" : "windows"}, <b className="text-neutral-900">{fmtDur(prev.sec)}</b>, to {project}</>
               : <>将把 <b className="text-neutral-900">{prev.windows}</b> 个窗口、<b className="text-neutral-900">{fmtDur(prev.sec)}</b> 改归到 {project}</>}
@@ -425,8 +425,8 @@ function LlmCard({ onDone }: { onDone: () => void }) {
           onClick={async () => setSt(await api.llmRun())}>{st.running ? tr(`判断中 ${st.done}/${st.total}`, `Judging ${st.done}/${st.total}`) : tr("重新判断", "Re-judge")}</button>
       </div>
       <p className="mt-1.5 text-[12px] leading-relaxed text-neutral-500">
-        {tr("规则匹配不到的窗口标题(去重后)交给模型按语义判断,只采用把握 ≥0.7 的结果;同一标题只问一次,项目变化后会重问。", "Window titles no rule matches (de-duplicated) are judged semantically by a model; only results with confidence ≥0.7 are used. Each title is asked once, and again after projects change.")}
-        {st.last_run && <> {tr(`上次判断 ${st.last_run.titles} 个标题,${st.last_run.labelled} 个归入项目。`, `Last run judged ${st.last_run.titles} ${st.last_run.titles === 1 ? "title" : "titles"}; ${st.last_run.labelled} assigned to projects.`)}</>}
+        {tr("未匹配规则的标题 · 置信度 ≥0.7", "Unmatched titles · confidence ≥0.7")}
+        {st.last_run && <> {tr(` · 上次 ${st.last_run.titles} 个,归入 ${st.last_run.labelled}`, ` · last run ${st.last_run.titles}, ${st.last_run.labelled} assigned`)}</>}
       </p>
       {st.error && <div className="mt-1 text-[12px] text-red-600">{st.error}</div>}
     </div>

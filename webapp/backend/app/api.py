@@ -301,7 +301,7 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
             out.append({"kind": "focus", "title": tr(f"最长专注 {_hm(dur)} · {best[2]}", f"Longest focus {_hm(dur)} · {label(best[2])}"),
                         "detail": f"{best[0].astimezone().strftime('%H:%M')}–"
                                    f"{best[1].astimezone().strftime('%H:%M')}"
-                                   + tr(f",其间 {best[3]} 次窗口切换", f", {best[3]} window switch" + ("es" if best[3] != 1 else ""))})
+                                   + tr(f" · 切换 {best[3]}", f" · {best[3]} switch" + ("es" if best[3] != 1 else ""))})
     # 2. human vs agent-execution overlap
     if m["human_active_sec"] > 0 and m.get("agent_exec_sec", 0) > 0:
         hun = _ivs(t["blocks"])
@@ -309,13 +309,11 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
         ov = _overlap_sec(hun, exn)
         ratio = ov / m["agent_exec_sec"]
         if ratio >= 0.6:
-            out.append({"kind": "overlap", "title": tr(f"Agent 执行与人在线重叠 {round(ratio * 100)}%", f"Agents ran while you were active {round(ratio * 100)}% of the time"),
-                        "detail": tr(f"执行总 {_hm(m['agent_exec_sec'])},其中 {_hm(ov)} 发生在你前台活跃时",
-                                     f"{_hm(ov)} of {_hm(m['agent_exec_sec'])} execution overlapped your activity")})
+            out.append({"kind": "overlap", "title": tr(f"Agent 与你同步 {round(ratio * 100)}%", f"Agents alongside you {round(ratio * 100)}%"),
+                        "detail": tr(f"重叠 {_hm(ov)} / {_hm(m['agent_exec_sec'])}", f"{_hm(ov)} of {_hm(m['agent_exec_sec'])} overlapped")})
         else:
-            out.append({"kind": "overlap", "title": tr(f"Agent 多数执行无人值守(重叠 {round(ratio * 100)}%)", f"Agents mostly ran unattended ({round(ratio * 100)}% overlap)"),
-                        "detail": tr(f"执行 {_hm(m['agent_exec_sec'])} 中仅 {_hm(ov)} 与前台活跃重叠,其余为后台/自动运行",
-                                     f"Only {_hm(ov)} of {_hm(m['agent_exec_sec'])} overlapped your activity; the rest ran in the background")})
+            out.append({"kind": "overlap", "title": tr(f"Agent 多为后台运行 · 重叠 {round(ratio * 100)}%", f"Agents mostly unattended · {round(ratio * 100)}% overlap"),
+                        "detail": tr(f"重叠 {_hm(ov)} / {_hm(m['agent_exec_sec'])}", f"{_hm(ov)} of {_hm(m['agent_exec_sec'])} overlapped")})
     # 3. overnight execution
     early_sec = 0
     for a in t["agent"]:
@@ -325,7 +323,7 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
                 early_sec += (parse_ts(iv["end"]) - parse_ts(iv["start"])).total_seconds()
     if early_sec > 20 * 60:
         out.append({"kind": "night", "title": tr(f"凌晨自动执行 {_hm(early_sec)}", f"{_hm(early_sec)} of overnight execution"),
-                    "detail": tr("08:00 前的 Agent 执行段,多为长任务/定时任务", "Agent runs before 08:00, mostly long or scheduled jobs")})
+                    "detail": tr("08:00 前", "Before 08:00")})
     # 4. biggest unknown gap
     if t["unknown"]:
         big = max(t["unknown"], key=lambda iv: (parse_ts(iv["end"]) - parse_ts(iv["start"])).total_seconds())
@@ -334,7 +332,7 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
             out.append({"kind": "unknown", "title": tr(f"观察缺口 {_hm(d)}", f"Observation gap {_hm(d)}"),
                         "detail": f"{parse_ts(big['start']).astimezone().strftime('%H:%M')}–"
                                    f"{parse_ts(big['end']).astimezone().strftime('%H:%M')} "
-                                   + tr("无窗口数据,可在时间轴上标注", "no window data; you can label it on the timeline")})
+                                   + tr("· 无窗口数据", "· no window data")})
     # 5. projects
     top = sorted(alloc.items(), key=lambda x: -x[1])[:2]
     if top and sum(alloc.values()) > 0:
@@ -356,8 +354,8 @@ def _insights(day: str, t: dict, alloc: dict, commits: list) -> list:
                  "AND field IN ('project','activity_type','end') AND superseded_by IS NULL",
                  (day,))["n"]
     if n_ov:
-        out.append({"kind": "corrections", "title": tr(f"{n_ov} 条人工修正生效中", f"{n_ov} manual correction" + ("s" if n_ov != 1 else "") + " in effect"),
-                    "detail": tr("重采集与重新分析不会覆盖;可在详情面板撤销", "Kept across re-sync and re-analysis; undo in the detail panel")})
+        out.append({"kind": "corrections", "title": tr(f"人工修正 {n_ov}", f"{n_ov} manual fix" + ("es" if n_ov != 1 else "")),
+                    "detail": tr("可在详情中撤销", "Undo in details")})
     return out[:7]
 
 
@@ -869,9 +867,9 @@ def reports_read(kind: str, name: str):
 
 class ChatIn(BaseModel):
     text: str
-    model: Optional[str] = None        # one of chat.models(); null = the default
     thread_id: Optional[int] = None    # null = start a new thread
     context: Optional[dict] = None
+    model: Optional[str] = None        # one of chat.models(); null = the default
 
 
 @app.get("/api/v1/chat/status")

@@ -94,9 +94,9 @@ export function Today({ day, days, onDayChange, goTab }: {
             <h1 className="text-[26px] font-semibold leading-tight tracking-tight text-neutral-900">{fmtDate(day)}</h1>
             <div className="mt-0.5 text-[12.5px] text-neutral-400">
               {tl?.observed_span
-                ? tr(`观测 ${fmtHM(tl.observed_span.start)}–${fmtHM(tl.observed_span.end)} · ${tl.episodes.length} 个工作段`,
-                  `Observed ${fmtHM(tl.observed_span.start)}–${fmtHM(tl.observed_span.end)} · ${tl.episodes.length} ${tl.episodes.length === 1 ? "work block" : "work blocks"}`)
-                : tr("当日无窗口观察", "No window observation this day")}
+                ? tr(`${fmtHM(tl.observed_span.start)}–${fmtHM(tl.observed_span.end)} · ${tl.episodes.length} 个工作段`,
+                  `${fmtHM(tl.observed_span.start)}–${fmtHM(tl.observed_span.end)} · ${tl.episodes.length} ${tl.episodes.length === 1 ? "work block" : "work blocks"}`)
+                : tr("无窗口记录", "No window data")}
               {err && <span className="ml-2 text-red-600">{err}</span>}
             </div>
           </div>
@@ -105,11 +105,11 @@ export function Today({ day, days, onDayChange, goTab }: {
           </div>
         </div>
         <div className="flex flex-wrap gap-7">
-          <Kpi v={fmtDur(m?.human_active_sec ?? 0)} l={tr("你在电脑前活跃", "You at the computer")} />
-          <Kpi v={fmtDur(m?.agent_exec_union_sec ?? 0)} l={tr(`Agent 在跑 · 峰值 ${m?.agent_peak_parallel ?? 0} 个并行`, `Agents running · peak ${m?.agent_peak_parallel ?? 0} parallel`)}
-            title={tr(`各会话执行时长相加为 ${fmtDur(m?.agent_exec_sec ?? 0)};这里按时间去重`, `Summed session run time is ${fmtDur(m?.agent_exec_sec ?? 0)}; this figure is de-duplicated over time`)} />
+          <Kpi v={fmtDur(m?.human_active_sec ?? 0)} l={tr("活跃时间", "Active time")} />
+          <Kpi v={fmtDur(m?.agent_exec_union_sec ?? 0)} l={tr(`Agent 运行 · 峰值 ${m?.agent_peak_parallel ?? 0}`, `Agent runtime · peak ${m?.agent_peak_parallel ?? 0}`)}
+            title={tr(`去重后;累加 ${fmtDur(m?.agent_exec_sec ?? 0)}`, `De-duplicated; summed ${fmtDur(m?.agent_exec_sec ?? 0)}`)} />
           <Kpi v={`${tl ? tl.agent.filter((a) => !a.subagent).length : 0}`} l={tr("会话", "Sessions") + (tl && tl.agent.some((a) => a.subagent) ? tr(` + ${tl.agent.filter((a) => a.subagent).length} 子代理`, ` + ${tl.agent.filter((a) => a.subagent).length} subagents`) : "")} />
-          <Kpi v={`${nPrompts}`} l={tr("你发的 Prompt", "Your prompts")} />
+          <Kpi v={`${nPrompts}`} l={tr("Prompt", "Prompts")} />
           <Kpi v={`${today?.outcomes.commits.length ?? 0}`} l={tr("提交", "Commits")} />
           {activeOv.length > 0 && <Kpi v={`${activeOv.length}`} l={tr("人工修正", "Manual fixes")} />}
         </div>
@@ -203,12 +203,12 @@ function Rail({ tl, sel, setSel, day, overrides, onChanged, goTab }: {
   }
   return (
     <div>
-      <div className="px-4 pb-1 pt-3 text-[12px] text-neutral-400">{tr(`${tl.episodes.length} 个工作段 · 点击在时间轴上放大`, `${tl.episodes.length} ${tl.episodes.length === 1 ? "work block" : "work blocks"} · click to zoom in on the timeline`)}</div>
+      <div className="px-4 pb-1 pt-3 text-[12px] text-neutral-400">{tr(`${tl.episodes.length} 个工作段`, `${tl.episodes.length} ${tl.episodes.length === 1 ? "work block" : "work blocks"}`)}</div>
       <div className="px-2 py-1.5">
         {tl.episodes.map((e) => <StoryItem key={episodeKey(e)} ep={e} onClick={() => setSel({ kind: "episode", key: episodeKey(e) })} />)}
         {!tl.episodes.length && (
           <div className="px-2 py-6 text-[12.5px] leading-relaxed text-neutral-400">
-            {tl.has_observation ? tr("当日没有足够的前台活动形成工作段。", "Not enough foreground activity to form work blocks this day.") : tr("当日没有前台窗口观察,无法划分工作段。可在时间轴上框选时段查看 Agent 执行与证据。", "No foreground window observation this day, so work blocks can't be formed. Drag-select a range on the timeline to see agent runs and evidence.")}
+            {tl.has_observation ? tr("无工作段", "No work blocks") : tr("无窗口记录", "No window data")}
           </div>
         )}
       </div>
@@ -261,7 +261,7 @@ function EpisodeDetail({ ep, tl, day, overrides, onChanged, goTab }: {
         await api.addOverride({ day_key: day, anchor_start: b.start, field: "project", value: v,
           note: `episode ${fmtHM(ep.start)}–${fmtHM(ep.end)}` });
       }
-      setMsg(tr(`已把 ${targets.length} 个窗口块改为 ${v}(追加式记录,可撤销)`, `Changed ${targets.length} window ${targets.length === 1 ? "block" : "blocks"} to ${v} (append-only record, can be undone)`));
+      setMsg(tr(`已改为 ${v} · ${targets.length} 块`, `Set to ${v} · ${targets.length} ${targets.length === 1 ? "block" : "blocks"}`));
       onChanged();
     } catch (e) { setMsg(tr(`失败:${e}`, `Failed: ${e}`)); }
     setBusy(false);
@@ -276,7 +276,7 @@ function EpisodeDetail({ ep, tl, day, overrides, onChanged, goTab }: {
         {fmtHM(ep.start)}–{fmtHM(ep.end)} · {tr("跨度", "Span")} {fmtDur((endM(ep.end, day) - startM(ep.start, day)) * 60)}
       </div>
       <div className="mt-3.5 grid grid-cols-3 gap-2">
-        <Stat v={fmtDur(ep.human_sec)} l={tr("人类活跃", "Human active")} />
+        <Stat v={fmtDur(ep.human_sec)} l={tr("活跃", "Active")} />
         <Stat v={`${Math.round(ep.share * 100)}%`} l={tr("主项目占比", "Main project share")} />
         <Stat v={`${ep.switches}`} l={tr("窗口切换", "Window switches")} />
       </div>
@@ -302,7 +302,7 @@ function EpisodeDetail({ ep, tl, day, overrides, onChanged, goTab }: {
       )}
 
       {ep.sessions.length > 0 && (
-        <Section title={tr(`同时段 Agent 会话 · ${ep.n_sessions}`, `Concurrent agent sessions · ${ep.n_sessions}`)}>
+        <Section title={tr(`Agent 会话 · ${ep.n_sessions}`, `Agent sessions · ${ep.n_sessions}`)}>
           {ep.sessions.map((s) => (
             <button key={s.id} className="flex w-full items-center gap-2 border-b border-neutral-50 py-1.5 text-left text-[12.5px] last:border-0 hover:bg-neutral-50"
               onClick={() => goTab("sessions", day)}>
@@ -316,7 +316,7 @@ function EpisodeDetail({ ep, tl, day, overrides, onChanged, goTab }: {
       )}
 
       {ep.prompts.length > 0 && (
-        <Section title={tr(`你给 Agent 的指令 · ${ep.n_prompts}`, `Your instructions to agents · ${ep.n_prompts}`)}>
+        <Section title={tr(`Prompt · ${ep.n_prompts}`, `Prompts · ${ep.n_prompts}`)}>
           {ep.prompts.slice(0, 5).map((p, i) => (
             <div key={i} className="mb-1.5 line-clamp-3 rounded-r-md border-l-[3px] border-neutral-300 bg-neutral-50 px-2.5 py-1.5 text-[12.5px] leading-snug text-neutral-600">
               <b className="mr-1 font-semibold tabular-nums text-neutral-800">{fmtHM(p.at)}</b>{p.text}
@@ -333,11 +333,11 @@ function EpisodeDetail({ ep, tl, day, overrides, onChanged, goTab }: {
 
       {!ep.is_category && ep.share < 0.4 && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-800">
-          {tr(`主项目只占 ${Math.round(ep.share * 100)}%,这一段比较碎,归属可能不准。`, `The main project is only ${Math.round(ep.share * 100)}% of this block; it is fragmented, so attribution may be inaccurate.`)}
+          {tr(`碎片化 · 主项目 ${Math.round(ep.share * 100)}%`, `Fragmented · main project ${Math.round(ep.share * 100)}%`)}
         </div>
       )}
 
-      <Section title={tr("修正归属(追加式,可撤销)", "Fix attribution (append-only, can be undone)")}>
+      <Section title={tr("修正归属", "Fix attribution")}>
         <div className="flex gap-2">
           <input value={project} onChange={(e) => setProject(e.target.value)} className="input flex-1" placeholder={tr("项目名", "Project name")} />
           <button className="btn-primary" disabled={busy || !project.trim() || !blocks.some((b) => b.project !== project.trim())}
@@ -366,7 +366,7 @@ function UnknownDetail({ interval, day, onChanged }: {
     <div>
       <h3 className="text-[18px] font-semibold text-amber-600">{tr("未知区间", "Unknown interval")}</h3>
       <div className="mt-1 text-[12.5px] leading-relaxed text-neutral-500">
-        {fmtHM(interval.start)}–{fmtHM(interval.end)} · {fmtDur(dur)}{tr("。观察期内没有窗口数据(虚拟桌面、全屏或采集缺口)。", ". No window data during the observation period (virtual desktop, full screen or a capture gap).")}
+        {fmtHM(interval.start)}–{fmtHM(interval.end)} · {fmtDur(dur)}{tr(" · 无窗口数据", " · no window data")}
       </div>
       <div className="mt-3 flex gap-2">
         <input value={project} onChange={(e) => setProject(e.target.value)}
@@ -410,7 +410,7 @@ function SessionDetail({ session, goTab, day }: {
         <Stat v={fmtDur(Math.max(0, lifecycle - session.exec_sec))} l={tr("等待/挂起", "Idle/suspended")} />
         <Stat v={`${session.n_user}`} l={tr("用户输入", "User inputs")} />
       </div>
-      <Section title={tr(`执行段 · ${session.segments.length}(10 分钟内事件聚为一段)`, `Run segments · ${session.segments.length} (events within 10 min merge into one)`)}>
+      <Section title={tr(`执行段 · ${session.segments.length}`, `Run segments · ${session.segments.length}`)}>
         {session.segments.map((s, i) => (
           <div key={i} className="flex gap-3 border-b border-neutral-50 py-1 text-[12.5px] tabular-nums last:border-0">
             <span className="text-neutral-600">{fmtHM(s.start)}–{fmtHM(s.end)}</span>
@@ -418,7 +418,7 @@ function SessionDetail({ session, goTab, day }: {
           </div>
         ))}
       </Section>
-      <button className="btn mt-4" onClick={() => goTab("sessions", day)}>{tr("在会话页查看完整对话与评审 →", "View full conversation and review on the Sessions page →")}</button>
+      <button className="btn mt-4" onClick={() => goTab("sessions", day)}>{tr("打开会话 →", "Open session →")}</button>
     </div>
   );
 }
@@ -431,9 +431,9 @@ function AllocationCard({ today }: { today: TodayData | null }) {
     <div className="card px-4 py-3.5">
       <h3 className="mb-2.5 text-[14px] font-semibold text-neutral-900">{tr("时间分配", "Time allocation")}</h3>
       <StackedBar allocation={today.allocation} />
-      <div className="label mb-1.5 mt-4">{tr("人类 · 按项目", "Human · by project")}</div>
+      <div className="label mb-1.5 mt-4">{tr("你 · 按项目", "You · by project")}</div>
       <AllocList allocation={today.allocation} />
-      <div className="label mb-1.5 mt-4">{tr("Agent 执行 · 按项目(不计入人类时间)", "Agent runs · by project (not counted as human time)")}</div>
+      <div className="label mb-1.5 mt-4">{tr("Agent · 按项目", "Agent · by project")}</div>
       <AllocList allocation={today.agent_allocation} />
     </div>
   );
@@ -442,7 +442,7 @@ function AllocationCard({ today }: { today: TodayData | null }) {
 function StackedBar({ allocation }: { allocation: Record<string, number> }) {
   const items = Object.entries(allocation).sort((a, b) => b[1] - a[1]);
   const total = items.reduce((s, [, v]) => s + v, 0);
-  if (!total) return <div className="text-[12px] text-neutral-400">{tr("无观察数据", "No observation data")}</div>;
+  if (!total) return <div className="text-[12px] text-neutral-400">{tr("无数据", "No data")}</div>;
   return (
     <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-neutral-100">
       {items.map(([name, sec]) => (
@@ -482,7 +482,7 @@ function OutcomesCard({ today }: { today: TodayData | null }) {
           {commits.map((c, i) => <CommitRow key={i} c={c} />)}
         </ul>
       ) : (
-        <div className="text-[12.5px] text-neutral-400">{tr("无 Git 提交(产出可能未提交或未走 Git)。", "No Git commits (output may be uncommitted or not tracked in Git).")}</div>
+        <div className="text-[12.5px] text-neutral-400">{tr("无提交", "No commits")}</div>
       )}
     </div>
   );
@@ -515,7 +515,7 @@ function QualityCard({ day, today, activeOv, observedSpan }: {
           : tr("无", "None")} />
         <QRow k={tr("活跃 / 观察", "Active / observed")} v={cov != null ? `${Math.round(cov * 100)}%` : "—"} />
         <QRow k={tr("未知区间", "Unknown intervals")} v={fmtDur(q.unknown_sec)} />
-        <QRow k={tr("生效人工修正", "Manual fixes in effect")} v={activeOv ? tr(`${activeOv} 条`, `${activeOv}`) : "0"} />
+        <QRow k={tr("人工修正", "Manual fixes")} v={activeOv ? tr(`${activeOv} 条`, `${activeOv}`) : "0"} />
         {screen && screen.state !== "off" && (
           <QRow k={tr("屏幕截图", "Screenshots")} v={screen.state === "down" ? tr("screenpipe 未运行", "screenpipe not running")
             : tr(`${screen.day_frames ?? 0} 帧`, `${screen.day_frames ?? 0} frames`) + (screen.state === "stalled" ? tr(" · 截屏已停止", " · capture stopped") : "")}

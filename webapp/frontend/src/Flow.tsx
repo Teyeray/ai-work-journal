@@ -76,10 +76,10 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
       <div className="border-b border-neutral-100 px-4 pb-3 pt-3.5">
         <div className="flex items-baseline justify-between">
           <h3 className="text-[15px] font-semibold text-neutral-900">{tr("活动流", "Activity flow")}</h3>
-          <span className="text-[12px] tabular-nums text-neutral-400">{tr("跟随时间轴视野", "Follows timeline view")} · {hm(a)}–{hm(b)}</span>
+          <span className="text-[12px] tabular-nums text-neutral-400">{hm(a)}–{hm(b)}</span>
         </div>
         <div className="mt-2.5 grid grid-cols-3 gap-2">
-          <Mini v={durS(stats.active)} l={tr("前台活跃", "Foreground active")} />
+          <Mini v={durS(stats.active)} l={tr("活跃", "Active")} />
           <Mini v={`${stats.switches}`} l={tr(`应用切换 · ${stats.perHour.toFixed(0)}/时`, `App switches · ${stats.perHour.toFixed(0)}/h`)} />
           <Mini v={durS(stats.avg)} l={tr("平均停留", "Avg. stay")} />
         </div>
@@ -140,8 +140,8 @@ export function Flow({ tl, visits, range, hoverVisit, onHoverVisit, focusVisit }
             </div>
           );
         })}
-        {items.length > MAX_ROWS && <div className="px-2 py-2 text-[12px] text-neutral-400">{tr(`还有 ${items.length - MAX_ROWS} 条,在时间轴上放大查看。`, `${items.length - MAX_ROWS} more; zoom in on the timeline to see them.`)}</div>}
-        {!items.length && <div className="px-2 py-6 text-[12.5px] text-neutral-400">{tr("这段时间没有前台窗口或证据。", "No foreground windows or evidence in this period.")}</div>}
+        {items.length > MAX_ROWS && <div className="px-2 py-2 text-[12px] text-neutral-400">{tr(`还有 ${items.length - MAX_ROWS} 条`, `${items.length - MAX_ROWS} more`)}</div>}
+        {!items.length && <div className="px-2 py-6 text-[12.5px] text-neutral-400">{tr("无活动", "No activity")}</div>}
       </div>
     </div>
   );

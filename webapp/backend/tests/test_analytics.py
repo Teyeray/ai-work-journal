@@ -45,7 +45,7 @@ def test_summary_uses_only_observed_days_for_human_measures():
     s = analytics.summarize([a, b])
     assert s["observed_days"] == 1 and s["human_per_day"] == 3600
     ins = analytics.insights([a, b], s, None, analytics.project_table([a, b], {}))
-    assert ins[0]["kind"] == "quality" and "1 天" in ins[0]["title"]
+    assert ins[0]["kind"] == "quality" and ins[0]["title"].startswith("1/")
     assert any(i["kind"] == "priority" and "还没有设置" in i["title"] for i in ins)
 
 

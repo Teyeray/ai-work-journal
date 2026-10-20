@@ -352,7 +352,6 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
         <label className="tl-check ml-auto text-[12.5px] text-neutral-500">
           <input type="checkbox" checked={showLinks} onChange={(e) => setShowLinks(e.target.checked)} />{tr("切换连线", "Switch links")}
         </label>
-        <span className="hidden text-[11.5px] text-neutral-400 2xl:inline">{tr("拖拽平移 · ⌘/Ctrl+滚轮缩放 · 双击放大 · ←/→/+/−/0", "Drag to pan · ⌘/Ctrl+wheel to zoom · double-click to zoom in · ←/→/+/−/0")}</span>
       </div>
 
       {/* readout */}
@@ -367,7 +366,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
             <span className="min-w-0 truncate text-neutral-800">{placeOf(readout.cur)}</span>
             <span className="shrink-0 text-neutral-400">{tr("已停留", "Stayed")} {durS(cursor! - readout.cur.s)} / {durS(readout.cur.e - readout.cur.s)}</span>
             {readout.cur.reason && <span className="shrink-0 rounded bg-white px-1.5 text-[11.5px] text-neutral-400 ring-1 ring-neutral-200" title={tr("为什么归到这里", "Why it was filed here")}>{reason(readout.cur.reason)}</span>}
-          </>) : <span className="text-neutral-400">{readout.away ? tr("离开电脑", "Away from computer") : tr("无前台窗口", "No foreground window")}</span>}
+          </>) : <span className="text-neutral-400">{readout.away ? tr("离开", "Away") : tr("无前台窗口", "No foreground window")}</span>}
           <span className="ml-auto flex shrink-0 items-center gap-3">
             {readout.prev && (
               <span className="max-w-[300px] truncate text-neutral-400">
@@ -381,13 +380,13 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
             )}
           </span>
         </>) : (
-          <span className="text-neutral-400">{tr("把鼠标放到时间轴上,读出那一秒你在哪个窗口、停留多久、从哪跳来、哪些 agent 在跑。", "Hover the timeline to see which window you were in at that second, how long you stayed, where you came from and which agents were running.")}</span>
+          <span className="text-neutral-400">{tr("悬停查看", "Hover to inspect")}</span>
         )}
       </div>
 
       {!tl.has_observation && (
         <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[12px] text-amber-700">
-          {tr("该日没有前台窗口观察(ActivityWatch),只显示 Agent 执行与证据。", "No foreground window observation (ActivityWatch) this day; only agent runs and evidence are shown.")}
+          {tr("无窗口记录 · 仅显示 Agent", "No window data · agents only")}
         </div>
       )}
 
@@ -565,8 +564,7 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
           <div className="tl-row">
             <div className="tl-lab" />
             <button className="tl2-toggle" onClick={(e) => { e.stopPropagation(); toggleDetail(); }}>
-              {detail ? tr("▾ 收起项目泳道", "▾ Collapse project lanes") : tr(`▸ 按项目展开 · ${lanes.length} 条泳道`, `▸ Expand by project · ${lanes.length} ${lanes.length === 1 ? "lane" : "lanes"}`)}
-              {!detail && overview.agentRows.length > 0 && <span className="text-neutral-400">{tr(" · 总览底部细线 = 各项目的 agent 执行", " · thin lines at the bottom of the overview = agent runs per project")}</span>}
+              {detail ? tr("▾ 收起", "▾ Collapse") : tr(`▸ 按项目 · ${lanes.length}`, `▸ By project · ${lanes.length}`)}
             </button>
           </div>
 
@@ -704,8 +702,8 @@ export function ActivityTimeline({ tl, visits, view, onView, extent, workday, se
       </div>
 
       <div className="tl-legend">
-        <span>{tr("总览:色块 = 那段时间你主要在哪个项目(放大后拆成单个窗口);下方细线 = 正在执行的 agent,每个项目一条", "Overview: color blocks = the project you mainly worked on then (zoom in to split into single windows); thin lines below = running agents, one per project")}</span>
-        <span>{tr("▲ 你发的 prompt · ◆ 提交", "▲ your prompt · ◆ commit")}</span>
+        <span>{tr("色块 项目 · 细线 Agent", "Block project · line agent")}</span>
+        <span>{tr("▲ Prompt · ◆ 提交", "▲ Prompt · ◆ Commit")}</span>
         <span><i className="away" />{tr("离开", "Away")}</span>
       </div>
     </div>

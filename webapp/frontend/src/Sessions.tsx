@@ -97,8 +97,8 @@ export function Sessions({ day, days, focusId }: { day: string; days: string[]; 
         <div>
           <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{tr("会话", "Sessions")}</h1>
           <div className="text-[12.5px] text-neutral-400">
-            {loading ? tr("加载中…", "Loading…") : tr(`${shown.length} 个会话 · 执行 ${fmtDur(totals.exec)}(累加) · 你发了 ${totals.prompts} 条指令`,
-              `${shown.length} ${shown.length === 1 ? "session" : "sessions"} · ${fmtDur(totals.exec)} running (summed) · ${totals.prompts} ${totals.prompts === 1 ? "prompt" : "prompts"} from you`)}
+            {loading ? tr("加载中…", "Loading…") : tr(`${shown.length} 个会话 · 执行 ${fmtDur(totals.exec)} · ${totals.prompts} 条指令`,
+              `${shown.length} ${shown.length === 1 ? "session" : "sessions"} · ${fmtDur(totals.exec)} run · ${totals.prompts} ${totals.prompts === 1 ? "prompt" : "prompts"}`)}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -126,10 +126,10 @@ export function Sessions({ day, days, focusId }: { day: string; days: string[]; 
               {rs.map((r) => <Row key={r.id} r={r} on={sel === r.id} onClick={() => setSel(r.id)} />)}
             </div>
           ))}
-          {!shown.length && !loading && <div className="px-4 py-10 text-center text-[12.5px] text-neutral-400">{tr("这段时间没有会话", "No sessions in this period")}</div>}
+          {!shown.length && !loading && <div className="px-4 py-10 text-center text-[12.5px] text-neutral-400">{tr("无会话", "No sessions")}</div>}
         </div>
         <div className="min-w-0">
-          {detail ? <Pane d={detail} onPick={setSel} range={selRow?.carried && selRow.range?.first_at ? selRow.range : null} /> : <div className="card py-24 text-center text-[13px] text-neutral-400">{tr("选择左侧的一个会话", "Select a session on the left")}</div>}
+          {detail ? <Pane d={detail} onPick={setSel} range={selRow?.carried && selRow.range?.first_at ? selRow.range : null} /> : <div className="card py-24 text-center text-[13px] text-neutral-400">{tr("选择一个会话", "Select a session")}</div>}
         </div>
       </div>
     </div>
@@ -149,11 +149,11 @@ function Row({ r, on, onClick }: { r: SessionRow; on: boolean; onClick: () => vo
         <div className="min-w-0 flex-1">
           <div className={`line-clamp-2 text-[13px] leading-snug ${title ? "text-neutral-900" : "italic text-neutral-400"}`}>
             {g?.last_prompt && <span className="mr-1 text-neutral-400">{tr("最近:", "Latest:")}</span>}
-            {title ?? (r.subagent ? tr("子代理任务", "Subagent task") : tr("没有输入(自动会话)", "No input (automated session)"))}
+            {title ?? (r.subagent ? tr("子代理任务", "Subagent task") : tr("自动会话", "Automated session"))}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[11.5px] tabular-nums text-neutral-400">
             <span>{fmtHM(s)}–{fmtHM(e)}</span>
-            {g && <span className="rounded bg-amber-50 px-1 text-amber-700" title={tr(`会话开始于 ${r.start_at.slice(0, 16).replace("T", " ")};统计只算所选日期内`, `Session started ${r.start_at.slice(0, 16).replace("T", " ")}; stats count only the selected dates`)}>{tr(`自 ${r.start_at.slice(5, 10)} 起`, `since ${r.start_at.slice(5, 10)}`)}</span>}
+            {g && <span className="rounded bg-amber-50 px-1 text-amber-700" title={tr(`开始于 ${r.start_at.slice(0, 16).replace("T", " ")} · 仅统计所选日期`, `Started ${r.start_at.slice(0, 16).replace("T", " ")} · selected dates only`)}>{tr(`自 ${r.start_at.slice(5, 10)} 起`, `since ${r.start_at.slice(5, 10)}`)}</span>}
             <span>{agentName(r.agent)}{r.subagent ? tr(" · 子代理", " · subagent") : ""}</span>
             <span className="text-neutral-600">{projName(r.project)}</span>
             <span>{tr("执行", "Ran")} {fmtDur(g ? g.exec_sec : r.exec_sec)}</span>
@@ -217,7 +217,7 @@ function Pane({ d, onPick, range }: { d: SessionDetail; onPick: (id: number) => 
     <div className="card">
       <div className="border-b border-neutral-100 px-6 pb-3 pt-4">
         <div className="flex items-start gap-3">
-          <h2 className="min-w-0 flex-1 text-[17px] font-semibold leading-snug text-neutral-900">{d.title ?? tr("没有输入的会话", "Session with no input")}</h2>
+          <h2 className="min-w-0 flex-1 text-[17px] font-semibold leading-snug text-neutral-900">{d.title ?? tr("自动会话", "Automated session")}</h2>
           {d.status === "running" && <span className="shrink-0 rounded bg-green-50 px-1.5 text-[12px] text-green-700">{tr("运行中", "Running")}</span>}
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5 text-[12px]">
@@ -227,7 +227,7 @@ function Pane({ d, onPick, range }: { d: SessionDetail; onPick: (id: number) => 
           <Chip>{tr("执行", "Ran")} {fmtDur(d.exec_sec)}</Chip>
           <Chip>{tr(`${d.prompts} 条指令 · ${d.tools} 次工具${errors ? ` · ${errors} 次出错` : ""}`, `${d.prompts} ${d.prompts === 1 ? "prompt" : "prompts"} · ${d.tools} ${d.tools === 1 ? "tool call" : "tool calls"}${errors ? ` · ${errors} ${errors === 1 ? "error" : "errors"}` : ""}`)}</Chip>
           {d.tokens > 0 && <Chip>{tok(d.tokens)} tokens</Chip>}
-          {range && <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">{tr(`所选日期:${fmtHM(range.first_at!)}–${fmtHM(range.last_at!)} · ${range.prompts} 条指令 · 执行 ${fmtDur(range.exec_sec)}`, `Selected dates: ${fmtHM(range.first_at!)}–${fmtHM(range.last_at!)} · ${range.prompts} ${range.prompts === 1 ? "prompt" : "prompts"} · ran ${fmtDur(range.exec_sec)}`)}</span>}
+          {range && <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700">{tr(`所选 ${fmtHM(range.first_at!)}–${fmtHM(range.last_at!)} · ${range.prompts} 条指令 · 执行 ${fmtDur(range.exec_sec)}`, `Selected ${fmtHM(range.first_at!)}–${fmtHM(range.last_at!)} · ${range.prompts} ${range.prompts === 1 ? "prompt" : "prompts"} · ran ${fmtDur(range.exec_sec)}`)}</span>}
         </div>
         <div className="mt-1.5 truncate font-mono text-[11.5px] text-neutral-400" title={`${d.cwd} · ${tr("归类", "Attribution")}: ${reason(d.project_reason)}`}>{d.cwd}</div>
         {(d.children.length > 0 || d.parent_id) && (
@@ -251,7 +251,7 @@ function Pane({ d, onPick, range }: { d: SessionDetail; onPick: (id: number) => 
           {hidden > 0 && (
             <button className="block w-full rounded-md border border-dashed border-neutral-200 py-1.5 text-[12px] text-neutral-500 hover:bg-neutral-50"
               onClick={() => setEarlier(true)}>
-              {tr(`↑ 显示更早的 ${hidden} 条(会话开始于 ${d.start_at.slice(5, 10)} ${fmtHM(d.start_at)})`, `↑ Show ${hidden} earlier (session started ${d.start_at.slice(5, 10)} ${fmtHM(d.start_at)})`)}
+              {tr(`↑ 更早 ${hidden} 条`, `↑ ${hidden} earlier`)}
             </button>
           )}
           {shown.map((i, k) => k < hidden ? null : (
@@ -260,7 +260,7 @@ function Pane({ d, onPick, range }: { d: SessionDetail; onPick: (id: number) => 
               <Bubble i={i} />
             </div>
           ))}
-          {!shown.length && <div className="py-10 text-center text-[12.5px] text-neutral-400">{mine ? tr("这个会话里没有你输入的指令", "No prompts from you in this session") : tr("没有对话内容", "No conversation content")}</div>}
+          {!shown.length && <div className="py-10 text-center text-[12.5px] text-neutral-400">{mine ? tr("无我的指令", "No prompts from you") : tr("无内容", "No content")}</div>}
         </div>
       ) : <ReviewPanel d={d} />}
     </div>
@@ -284,7 +284,7 @@ function Bubble({ i }: { i: Item }) {
   if (i.k === "ctx") {
     return (
       <button onClick={() => setOpen(!open)} className="block w-full rounded-md px-3 py-1 text-left text-[11.5px] text-neutral-400 hover:bg-neutral-50">
-        <span className="tabular-nums">{fmtHM(i.e.at)}</span> {tr("注入的上下文 / 系统消息", "Injected context / system message")} {open ? "▾" : "▸"}
+        <span className="tabular-nums">{fmtHM(i.e.at)}</span> {tr("系统消息", "System message")} {open ? "▾" : "▸"}
         {open && <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-neutral-500">{text}</div>}
       </button>
     );
@@ -351,12 +351,12 @@ function ReviewPanel({ d }: { d: SessionDetail }) {
     <div className="px-6 py-4">
       <div className="flex items-center gap-3">
         <div className="text-[12.5px] text-neutral-500">
-          {tr("按固定 rubric 打分:你的指令质量 4×25 分 + agent 执行 5 项共 100 分;结果按内容指纹缓存。", "Scored with a fixed rubric: prompt quality 4×25 points + agent execution 5 items for 100 points; results are cached by content fingerprint.")}
+          {tr("满分 100 · 指令 4 项 · 执行 5 项", "100 pts · 4 prompt + 5 execution criteria")}
         </div>
         <button className="btn-primary ml-auto h-8 shrink-0 text-[12.5px]" disabled={busy || !d.review_available} onClick={go}>
           {busy ? tr("评审中…", "Reviewing…") : review ? tr("重新评审", "Re-review") : tr("开始评审", "Start review")}</button>
       </div>
-      {!d.review_available && <div className="mt-2 text-[12.5px] text-amber-700">{tr("没有可用的 LLM(配置百炼密钥后即可评审)。", "No LLM available (configure a Bailian key to enable review).")}</div>}
+      {!d.review_available && <div className="mt-2 text-[12.5px] text-amber-700">{tr("未配置 LLM", "No LLM configured")}</div>}
       {err && <div className="mt-2 text-[12.5px] text-red-600">{err}</div>}
       {review && (
         <div className="mt-4 space-y-4">

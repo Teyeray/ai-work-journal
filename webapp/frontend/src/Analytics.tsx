@@ -75,7 +75,7 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
         <div>
           <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">{tr("分析", "Analytics")}</h1>
           <div className="text-[12.5px] text-neutral-400">
-            {data ? tr(`${s!.days} 天 · ${s!.observed_days} 天有窗口观察 · 对比前 ${s!.days} 天`, `${s!.days} days · ${s!.observed_days} with window observation · vs previous ${s!.days} days`) : tr("加载中…", "Loading…")}
+            {data ? tr(`${s!.days} 天 · ${s!.observed_days} 天有记录`, `${s!.days} days · ${s!.observed_days} recorded`) : tr("加载中…", "Loading…")}
             {err && <span className="ml-2 text-red-600">{err}</span>}
           </div>
         </div>
@@ -93,25 +93,25 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
 
       {data && s && (<>
         <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-          <Tile label={tr("日均电脑前活跃", "Daily active at computer")} v={s.human_per_day != null ? fmtDur(s.human_per_day) : "—"}
-            cmp={delta(s.human_per_day, p?.human_per_day, (x) => fmtDur(Math.abs(x)))} hint={tr("只算有窗口观察的日子", "Only days with window observation")} />
-          <Tile label={tr("日均 Agent 在跑", "Daily agent running")} v={s.agent_per_day != null ? fmtDur(s.agent_per_day) : "—"}
-            cmp={delta(s.agent_per_day, p?.agent_per_day, (x) => fmtDur(Math.abs(x)))} hint={tr("所有会话执行段按时间去重", "Execution segments of all sessions, de-duplicated by time")} />
+          <Tile label={tr("日均活跃", "Active / day")} v={s.human_per_day != null ? fmtDur(s.human_per_day) : "—"}
+            cmp={delta(s.human_per_day, p?.human_per_day, (x) => fmtDur(Math.abs(x)))} hint={tr("仅计有记录的日子", "Recorded days only")} />
+          <Tile label={tr("日均 Agent", "Agent / day")} v={s.agent_per_day != null ? fmtDur(s.agent_per_day) : "—"}
+            cmp={delta(s.agent_per_day, p?.agent_per_day, (x) => fmtDur(Math.abs(x)))} hint={tr("按时间去重", "De-duplicated")} />
           <Tile label={tr("归入项目", "Assigned to projects")} v={pct(s.project_share)} cmp={delta(s.project_share, p?.project_share, ppt)}
-            hint={tr("你的时间中落在某个项目泳道的比例", "Share of your time that falls in a project lane")} />
+            hint={tr("落在项目内的时间占比", "Share of time in a project")} />
           <Tile label={tr("长时间专注", "Long focus")} v={pct(s.focus_share)} cmp={delta(s.focus_share, p?.focus_share, ppt)}
-            hint={tr("项目时间中处于 ≥30 分钟连续段的比例", "Share of project time in stretches of 30+ minutes")} />
+            hint={tr("≥30 分钟连续段占比", "Share in stretches ≥30 min")} />
           <Tile label={tr("每小时切换", "Switches per hour")} v={s.switches_per_hour != null ? s.switches_per_hour.toFixed(1) : "—"}
-            cmp={delta(s.switches_per_hour, p?.switches_per_hour, (x) => Math.abs(x).toFixed(1), true)} hint={tr("项目泳道之间的切换,短于 1 分钟的瞥一眼不算", "Switches between project lanes; glances under 1 minute do not count")} />
+            cmp={delta(s.switches_per_hour, p?.switches_per_hour, (x) => Math.abs(x).toFixed(1), true)} hint={tr("项目间切换,<1 分钟不计", "Between projects; <1 min ignored")} />
           <Tile label={tr("提交 / Prompt", "Commits / Prompts")} v={`${s.commits} / ${s.prompts}`}
-            cmp={p ? { text: tr(`前期 ${p.commits} / ${p.prompts}`, `Prev ${p.commits} / ${p.prompts}`), tone: "flat" } : null} hint={tr("整个周期的合计", "Total for the whole period")} />
+            cmp={p ? { text: tr(`前期 ${p.commits} / ${p.prompts}`, `Prev ${p.commits} / ${p.prompts}`), tone: "flat" } : null} hint={tr("周期合计", "Period total")} />
         </div>
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Card title={tr("一天的节奏", "Daily rhythm")} sub={tr("每小时你在电脑前活跃的分钟数 · 悬停看 Agent 与切换", "Minutes you were active at the computer each hour · hover for agent and switches")}>
+          <Card title={tr("一天的节奏", "Daily rhythm")} sub={tr("分钟 / 小时", "min per hour")}>
             <Rhythm data={data} />
           </Card>
-          <Card title={tr("洞察", "Insights")} sub={tr("由数据计算,附依据和可信度", "Computed from data, with evidence and confidence")}>
+          <Card title={tr("洞察", "Insights")} sub="">
             <ul className="space-y-3">
               {data.insights.map((i, k) => (
                 <li key={k}>
@@ -124,25 +124,25 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
                   <div className="mt-0.5 text-[12.5px] leading-relaxed text-neutral-500">{i.detail}</div>
                 </li>
               ))}
-              {!data.insights.length && <li className="text-[12.5px] text-neutral-400">{tr("数据不足,暂时没有可靠的结论。", "Not enough data for reliable conclusions yet.")}</li>}
+              {!data.insights.length && <li className="text-[12.5px] text-neutral-400">{tr("数据不足", "Not enough data")}</li>}
             </ul>
           </Card>
         </div>
 
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Card title={tr("时间都去哪了", "Where the time went")} sub={tr("你在电脑前的时间,按项目堆叠 · 点柱子打开那一天", "Your time at the computer, stacked by project · click a bar to open that day")}>
+          <Card title={tr("时间都去哪了", "Where the time went")} sub={tr("按项目", "By project")}>
             <DailyStack data={data} onDay={goDay} />
           </Card>
-          <Card title={tr("Agent 使用", "Agent usage")} sub={tr("每天 Agent 在跑的时长与你发的 prompt", "Daily agent running time and prompts you sent")}>
+          <Card title={tr("Agent 使用", "Agent usage")} sub={tr("运行时长 · Prompt", "Runtime · prompts")}>
             <AgentDaily data={data} />
           </Card>
         </div>
 
         <div className="grid items-start gap-4 lg:grid-cols-2">
-          <Card title={tr("你和 Agent 在各项目上的投入", "You and agents per project")} sub={tr("你的时间 vs Agent 执行时间(去重) · 小时", "Your time vs agent execution time (de-duplicated) · hours")}>
+          <Card title={tr("各项目投入", "Per project")} sub={tr("你 vs Agent · 小时", "You vs agent · hours")}>
             <YouVsAgent data={data} />
           </Card>
-          <Card title={tr("专注分布", "Focus distribution")} sub={tr("项目时间按所在连续段的长度分组 · 越往下越专注", "Project time grouped by stretch length · lower is more focused")}>
+          <Card title={tr("专注分布", "Focus distribution")} sub={tr("按连续段长度", "By stretch length")}>
             <Focus data={data} />
           </Card>
         </div>
@@ -155,11 +155,11 @@ export function Analytics({ days, goDay }: { days: string[]; goDay: (d: string) 
 
 type Cmp = { text: string; tone: "up" | "down" | "flat" } | null;
 const pct = (x: number | null) => (x == null ? "—" : `${Math.round(x * 100)}%`);
-const ppt = (x: number) => tr(`${Math.abs(Math.round(x * 100))} 个百分点`, `${Math.abs(Math.round(x * 100))} pp`);
+const ppt = (x: number) => tr(`${Math.abs(Math.round(x * 100))}pp`, `${Math.abs(Math.round(x * 100))}pp`);
 function delta(cur: number | null | undefined, prev: number | null | undefined, fmt: (x: number) => string, lowerIsBetter = false): Cmp {
   if (cur == null || prev == null) return null;
   const d = cur - prev;
-  if (Math.abs(d) < 1e-9) return { text: tr("与前期持平", "Same as previous"), tone: "flat" };
+  if (Math.abs(d) < 1e-9) return { text: tr("持平", "Flat"), tone: "flat" };
   const up = d > 0;
   return { text: `${up ? "↑" : "↓"} ${fmt(d)} vs ${tr("前期", "prev")}`, tone: up !== lowerIsBetter ? "up" : "down" };
 }
@@ -170,7 +170,7 @@ function Tile({ label, v, cmp, hint }: { label: string; v: string; cmp: Cmp; hin
       <div className="text-[12px] text-neutral-500">{label}</div>
       <div className="mt-0.5 text-[24px] font-semibold leading-tight tracking-tight tabular-nums text-neutral-900">{v}</div>
       <div className="mt-0.5 h-4 text-[11.5px] tabular-nums text-neutral-400">
-        {cmp ? <span className={cmp.tone === "flat" ? "" : "text-neutral-600"}>{cmp.text}</span> : tr("前期无数据", "No previous data")}
+        {cmp ? <span className={cmp.tone === "flat" ? "" : "text-neutral-600"}>{cmp.text}</span> : tr("无对比", "No comparison")}
       </div>
     </div>
   );
@@ -181,7 +181,7 @@ function Card({ title, sub, children }: { title: string; sub: string; children: 
     <div className="card px-5 pb-4 pt-3.5">
       <div className="mb-2">
         <h2 className="text-[15px] font-semibold text-neutral-900">{title}</h2>
-        <div className="text-[12px] text-neutral-400">{sub}</div>
+        {sub && <div className="text-[12px] text-neutral-400">{sub}</div>}
       </div>
       {children}
     </div>
@@ -254,7 +254,7 @@ function DailyStack({ data, onDay }: { data: Overview; onDay: (d: string) => voi
         formatter: (ps: unknown) => {
           const arr = ps as { dataIndex: number; seriesName: string; color: string; value: number }[];
           const d = data.days[arr[0].dataIndex];
-          if (!d.has_observation) return `<b>${dayLabel(d.day)}</b><br/>${tr("没有窗口数据", "No window data")}<br/>${tr("Agent 在跑", "Agent running")} ${fmtDur(d.agent_sec)}`;
+          if (!d.has_observation) return `<b>${dayLabel(d.day)}</b><br/>${tr("没有窗口数据", "No window data")}<br/>${tr("Agent 运行", "Agent runtime")} ${fmtDur(d.agent_sec)}`;
           return `<b>${dayLabel(d.day)}</b> · ${fmtDur(d.human_sec)}<div style="margin-top:4px">` +
             arr.filter((x) => x.value > 0).sort((a, b) => b.value - a.value)
               .map((x) => row(x.color, x.seriesName, fmtDur(x.value * 3600))).join("") + "</div>";
@@ -344,7 +344,7 @@ function Focus({ data }: { data: Overview }) {
   return (
     <div>
       {useEChart(option, 200)}
-      {longest && <div className="mt-1 text-[12px] text-neutral-500">{tr(`最长一段:${longest.project} 连续 ${fmtDur(longest.min * 60)}`, `Longest stretch: ${longest.project}, ${fmtDur(longest.min * 60)} continuous`)}</div>}
+      {longest && <div className="mt-1 text-[12px] text-neutral-500">{tr(`最长 · ${longest.project} · ${fmtDur(longest.min * 60)}`, `Longest · ${longest.project} · ${fmtDur(longest.min * 60)}`)}</div>}
     </div>
   );
 }
@@ -366,7 +366,7 @@ function Rhythm({ data }: { data: Overview }) {
           const d = days[y];
           return `<b>${dayLabel(d.day)} ${String(x).padStart(2, "0")}:00</b><br/>` +
             (v < 0 ? tr("没有窗口数据", "No window data") : tr(`你 ${v} 分钟 · 切换 ${d.hourly_switches[x]} 次`, `You ${v} min · ${d.hourly_switches[x]} ${d.hourly_switches[x] === 1 ? "switch" : "switches"}`)) +
-            `<br/>${tr(`Agent 在跑 ${Math.round(d.hourly_agent[x])} 分钟`, `Agent running ${Math.round(d.hourly_agent[x])} min`)}`;
+            `<br/>${tr(`Agent ${Math.round(d.hourly_agent[x])} 分钟`, `Agent ${Math.round(d.hourly_agent[x])} min`)}`;
         },
       },
       xAxis: { type: "category", data: [...Array(24).keys()].map((h) => `${h}`), ...axisCat, splitArea: { show: false } },
@@ -402,7 +402,7 @@ function AgentDaily({ data }: { data: Overview }) {
     yAxis: { type: "value", ...axisVal, axisLabel: { ...axisVal.axisLabel, formatter: (v: number) => `${v}${unit}` } },
     series: [{ type: "bar", barMaxWidth: 16, color: "#2a78d6", itemStyle: { borderRadius: [3, 3, 0, 0] }, data: vals }],
   });
-  const exec = useMemo(() => mk(tr("Agent 在跑(去重)", "Agent running (de-duplicated)"), data.days.map((d) => h1(d.agent_sec)), (v) => fmtDur(v * 3600), "h"), [data]); // eslint-disable-line
-  const prm = useMemo(() => mk(tr("你发的 prompt", "Prompts you sent"), data.days.map((d) => d.prompts), (v) => tr(`${v} 条`, `${v}`), ""), [data]); // eslint-disable-line
+  const exec = useMemo(() => mk(tr("Agent 运行", "Agent runtime"), data.days.map((d) => h1(d.agent_sec)), (v) => fmtDur(v * 3600), "h"), [data]); // eslint-disable-line
+  const prm = useMemo(() => mk(tr("Prompt", "Prompts"), data.days.map((d) => d.prompts), (v) => tr(`${v} 条`, `${v}`), ""), [data]); // eslint-disable-line
   return <div className="space-y-1">{useEChart(exec, 150)}{useEChart(prm, 150)}</div>;
 }
