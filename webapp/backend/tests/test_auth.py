@@ -57,7 +57,8 @@ def test_repeated_wrong_passwords_are_throttled(env, monkeypatch):
 
 
 def test_hash_round_trip():
-    h = auth.make_hash("abc")
-    assert h.startswith("pbkdf2_sha256$") and "abc" not in h
-    assert auth.check_password("abc", h) and not auth.check_password("abd", h)
-    assert not auth.check_password("abc", "garbage")
+    # not hex, so a random salt can't contain it by chance
+    h = auth.make_hash("s3cret-pass")
+    assert h.startswith("pbkdf2_sha256$") and "s3cret-pass" not in h
+    assert auth.check_password("s3cret-pass", h) and not auth.check_password("s3cret-pasz", h)
+    assert not auth.check_password("s3cret-pass", "garbage")

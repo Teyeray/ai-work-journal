@@ -1,6 +1,7 @@
 """问 AI: tools over local data, the tool loop, history replay and frame serving."""
 import json
 import shutil
+import sys
 
 import pytest
 from fastapi.testclient import TestClient
@@ -188,7 +189,8 @@ def test_missing_screencast_portal_is_named_and_restart_fixes_the_portal_first(t
     chat._SP_STATUS.update(at=0, v=None, restarted_at=0)
 
 
-@pytest.mark.skipif(not shutil.which("bash"), reason="run_bash needs bash")
+# Windows runners resolve "bash" to the WSL stub, which can't run commands
+@pytest.mark.skipif(sys.platform == "win32" or not shutil.which("bash"), reason="run_bash needs a POSIX bash")
 def test_read_only_bash_runs_but_writes_wait_for_approval(env, monkeypatch, tmp_path):
     from app import localtools
     monkeypatch.setattr(localtools, "sandbox_available", lambda: True)
