@@ -18,6 +18,7 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 from collect import DATA, parse_date  # noqa: E402
 
+import llm_cli  # noqa: E402
 import osutil  # noqa: E402
 
 CFG = osutil.load_config()
@@ -31,13 +32,9 @@ PROMPT = (BASE / "templates" / "daily.md").read_text(encoding="utf-8")
 
 
 def run_pi(prompt, attachment, timeout=900):
-    cmd = [CFG["pi_bin"], "-p", "--no-tools", "--no-session",
-           "--mode", "text", f"@{attachment}", prompt]
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
-                       env=osutil.tool_env(), cwd=str(BASE))
-    if r.returncode != 0:
-        raise RuntimeError(f"pi exited {r.returncode}: {r.stderr[-500:]}")
-    return r.stdout.strip()
+    """Backwards-compatible name; the backend is whichever one is configured
+    (pi by default, opencode when config.local.json says so). See llm_cli."""
+    return llm_cli.generate(prompt, attachment, timeout=timeout)
 
 
 # --- schedule (set from the web dashboard's 日报 page) ---------------------
@@ -70,6 +67,9 @@ def main():
     r = subprocess.run([sys.executable, str(BASE / "collect.py"), d.isoformat()],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     print(r.stdout.strip() or r.stderr.strip())
+    if r.returncode != 0:
+        print("collection failed; previous reports and digests remain unchanged")
+        sys.exit(1)
     if not digest.exists():
         print(f"no digest for {d}, abort")
         sys.exit(1)
@@ -83,15 +83,25 @@ def main():
         print(f"analysis skipped: {e}")
     report_path = REPORTS / f"{d.isoformat()}.md"
     prompt = PROMPT.replace("{date}", d.isoformat())
+    # a previous *successful* report is never replaced by a fallback digest
+    keep = report_path.exists() and "LLM 生成失败" not in report_path.read_text(encoding="utf-8")
     try:
         out = run_pi(prompt, digest)
     except Exception as e:
-        print(f"pi failed: {e}\nfalling back to raw digest")
-        out = f"> 警告: LLM 生成失败,以下为原始数据。\n\n" + digest.read_text(encoding="utf-8")
-    header = (f"<!-- generated {dt.datetime.now(LOCAL_TZ).isoformat()} "
-              f"by ai-work-journal -->\n\n")
-    report_path.write_text(header + out + "\n", encoding="utf-8")
-    print(f"report written: {report_path}")
+        if keep:
+            print(f"report LLM failed: {e}\nkept the previous report: {report_path}")
+            out = None
+        else:
+            print(f"report LLM failed: {e}\nfalling back to raw digest")
+            out = f"> 警告: LLM 生成失败,以下为原始数据。\n\n" + digest.read_text(encoding="utf-8")
+    if out is not None:
+        header = (f"<!-- generated {dt.datetime.now(LOCAL_TZ).isoformat()} "
+                  f"by ai-work-journal -->\n\n")
+        # write-then-rename: a crash mid-write never truncates a good report
+        tmp = report_path.with_suffix(".md.tmp")
+        tmp.write_text(header + out + "\n", encoding="utf-8")
+        tmp.replace(report_path)
+        print(f"report written: {report_path}")
     # best-effort feishu push
     if load_schedule()["feishu_push"]:
         fe = subprocess.run([sys.executable, str(BASE / "feishu.py"), str(report_path)],

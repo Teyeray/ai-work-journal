@@ -241,7 +241,14 @@ def _doctor_rows() -> list:
         _check(rows, OK if p.is_dir() else WARN, name, str(p) + ("" if p.is_dir() else " (not found)"))
     roots = [r for r in cfg.get("project_roots", []) if Path(r).is_dir()]
     _check(rows, OK if roots else WARN, "project roots", ", ".join(roots) or "none found — edit project_roots")
-    for k, why in (("pi_bin", "reports & analysis"), ("gh_bin", "PR stats"), ("lark_bin", "Feishu push")):
+    import llm_cli, agent_sources
+    report_backend = llm_cli.describe()
+    _check(rows, OK if report_backend["available"] else BAD, "report LLM CLI",
+           report_backend["backend"] + (" (normal configuration)" if report_backend["available"] else f" — {report_backend['problem']}"))
+    for name, source in agent_sources.status().items():
+        if name in {"codex", "opencode"}:
+            _check(rows, OK if source["present"] else WARN, f"{name} sessions", "read-only source available" if source["present"] else source["skip_reason"])
+    for k, why in (("gh_bin", "PR stats"), ("lark_bin", "Feishu push (optional)")):
         p = cfg.get(k)
         _check(rows, OK if p and Path(p).exists() else WARN, k.replace("_bin", ""), (p if p and Path(p).exists() else "not found") + f" ({why})")
     for tool, why in (("git", "commits"), ("ffmpeg", "screenpipe video frames")):

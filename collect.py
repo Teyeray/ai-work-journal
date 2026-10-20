@@ -26,6 +26,7 @@ import urllib.request
 from pathlib import Path
 
 import collect_feishu
+import agent_sources
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
@@ -47,6 +48,10 @@ def parse_date(arg):
 def bounds(d):
     start = dt.datetime(d.year, d.month, d.day, tzinfo=LOCAL_TZ)
     end = start + dt.timedelta(days=1)
+    # A manual report is a snapshot up to now, never a claim about future work.
+    current = dt.datetime.now(LOCAL_TZ)
+    if start <= current < end:
+        end = current
     return start, end
 
 
@@ -669,6 +674,7 @@ def agent_summary(sessions):
 def write_digest(d, data):
     lines = []
     lines.append(f"# 原始活动数据 {d.isoformat()}")
+    lines.append(f"采集截止: {data.get('generated_at', '')}。这是已采集记录的快照，不能证明全天覆盖或本人手工完成。")
     aw = data["activitywatch"]
     lines.append("")
     lines.append("## 1. 电脑使用统计")
@@ -698,6 +704,24 @@ def write_digest(d, data):
                     lines.append("  工具: " + ", ".join(f"{k}×{v}" for k, v in tops))
                 if s.get("files"):
                     lines.append("  文件: " + ", ".join(s["files"][:10]))
+                if s.get("native_parent_id"):
+                    lines.append(f"  原生子会话，父ID: {s['native_parent_id']}；不得与主任务重复计成果")
+                if s.get("forked_from_id"):
+                    lines.append(f"  fork/继承背景: {s['forked_from_id']}；不是子任务完成证明")
+                # Include outcomes, not only the opening request and tool counts.
+                # Full records remain in day JSON; the digest is a bounded sample.
+                turns = s.get("turns") or []
+                for role, label in (("user", "用户侧反馈/要求"), ("assistant", "Agent结果说明（自述）"), ("tool", "工具返回记录")):
+                    selected = [t for t in turns if t.get("role") == role]
+                    # Reading a previously generated diary is context, not a
+                    # new execution result. Avoid feeding stale report claims
+                    # back into the next report as if they were fresh outcomes.
+                    if role == "tool":
+                        selected = [t for t in selected if not re.search(r"#{1,2}\s*工作日报\s+\d{4}-\d{2}-\d{2}", str(t.get("x") or ""))]
+                    for t in selected[-(4 if role == "tool" else 3):]:
+                        text = re.sub(r"\s+", " ", str(t.get("x") or ""))
+                        excerpt = text if len(text) <= 500 else text[:230] + " [中段省略] " + text[-230:]
+                        lines.append(f"  {label} {t.get('t','')}: {excerpt}")
     else:
         lines.append("- 无")
     lines.append("")
@@ -774,7 +798,8 @@ def main():
         "date": d.isoformat(),
         "generated_at": dt.datetime.now(LOCAL_TZ).isoformat(),
         "activitywatch": collect_activitywatch(start, end),
-        "agent_sessions": collect_claude(start, end) + collect_pi(start, end),
+        "agent_sessions": (collect_claude(start, end) + collect_pi(start, end)
+                           + agent_sources.collect(start, end)),
         "git": collect_git(start, end),
         "github": collect_github(start, end),
         "screenpipe": collect_screenpipe(start, end),

@@ -113,7 +113,7 @@ def capture_once() -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(jpg)
         text = err = eng = ms = None
-        if ocr.is_api():
+        if ocr.is_api() or ocr.engine() in ocr.LOCAL_ENGINES:
             try:
                 r = ocr.recognize(jpg)
                 text, eng, ms = r["text"], r["engine"], r["ms"]
@@ -189,6 +189,7 @@ def status() -> dict:
     if not config.CAPTURE.get("enabled"):
         return {"state": "off", "source": "builtin"}
     ok, why = support()
+    ok_ocr, ocr_problem = ocr.configured()
     last = db.q1("SELECT captured_at FROM screen_captures ORDER BY captured_at DESC LIMIT 1")
     v = {"source": "builtin", "state": "ok", "last_frame": None, "restartable": False,
          "monitors": [], "ocr": ocr.describe()}
@@ -199,9 +200,12 @@ def status() -> dict:
         v.update(state="down", reason=why, hint=tr("在 webapp/config.json 关闭 capture.enabled,或换用 screenpipe", "Turn off capture.enabled in webapp/config.json, or use screenpipe"))
     elif not running():
         v.update(state="down", reason=tr("截屏线程没有运行", "The capture thread isn't running"), hint=tr("重启 journal web", "Restart journal web"))
-    elif not ocr.is_api():
-        v.update(state="stalled", reason=tr("截图在保存,但 OCR 引擎不是 API(ocr.engine)", "Screenshots are saved, but the OCR engine isn't an API (ocr.engine)"),
-                 hint=tr("把 ocr.engine 设为 openai 或 http,并配置密钥", "Set ocr.engine to openai or http and configure a key"))
+    elif not (ocr.is_api() or ocr.engine() in ocr.LOCAL_ENGINES):
+        v.update(state="stalled", reason=tr("截图在保存,但 OCR 引擎不读图片(ocr.engine)", "Screenshots saved, but OCR engine cannot read images"),
+                 hint=tr("把 ocr.engine 设为 openai、http 或 vision", "Set ocr.engine to openai, http or vision"))
+    elif not ok_ocr:
+        v.update(state="stalled", reason=f"OCR 引擎未就绪:{ocr_problem}",
+                 hint="检查 ocr 配置;vision 需要 macOS 与 swiftc")
     elif _S["last_error"]:
         v.update(state="stalled", reason=tr("OCR 失败:", "OCR failed: ") + str(_S['last_error']), hint=tr("检查 OCR 接口地址和密钥", "Check the OCR endpoint and key"))
     return v

@@ -8,10 +8,12 @@ from .adapters import aw, sessions, git
 
 
 def run_all() -> dict:
-    results = [aw.scan(), sessions.scan("pi"), sessions.scan("claude"), git.scan()]
+    results = [aw.scan(), sessions.scan("pi"), sessions.scan("claude"), git.scan(),
+               sessions.scan_optional()]
     days = sorted(set(d for r in results for d in r.get("days", [])))
     _link_session_projects()
     return {"results": results, "affected_days": days,
+            "optional_agent_sources": sessions.optional_sources_status(),
             "total_new": sum(r.get("new", 0) for r in results)}
 
 

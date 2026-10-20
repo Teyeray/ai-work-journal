@@ -18,23 +18,20 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 from collect import DATA, parse_date, CFG  # noqa: E402
+import llm_cli  # noqa: E402
 import osutil  # noqa: E402
 
 LOCAL_TZ = dt.datetime.now().astimezone().tzinfo
 
 
 def run_pi(prompt, attachment, timeout=900):
-    cmd = [CFG["pi_bin"], "-p", "--no-tools", "--no-session",
-           "--mode", "text", f"@{attachment}", prompt]
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
-                       env=osutil.tool_env(), cwd=str(BASE))
-    if r.returncode != 0:
-        raise RuntimeError(f"pi exited {r.returncode}: {r.stderr[-500:]}")
-    return r.stdout.strip()
+    """Backwards-compatible name; the backend is whichever one is configured
+    (pi by default, opencode when config.local.json says so). See llm_cli."""
+    return llm_cli.generate(prompt, attachment, timeout=timeout)
 
 
 PROMPT = """你是工作效能分析助手。附件是某天({date})的用户与 AI agent 的对话记录摘要。
-每个会话含: 编号、agent、项目、消息数、任务首句、每轮人工输入原文、工具统计、触及文件。
+每个会话含: 编号、agent、项目、消息数、任务首句、标明来源角色的对话/工具记录、工具统计、触及文件。用户侧通道不证明本人键入或编辑，Agent自述不证明独立验收。
 
 请完成:
 1. 给每个会话写"sum": 一句话概括,≤30字,说清实际做了什么(不要复述任务首句)。
@@ -56,8 +53,8 @@ def session_text(i, s):
         lines.append(f"  任务首句: {task[:120]}")
     turns = s.get("turns") or []
     if turns:
-        for t in turns:
-            lines.append(f"  {t['t']} {t['x']}")
+        for t in turns[-12:]:
+            lines.append(f"  {t['t']} [{t.get('role', 'user_channel')}] {t['x']}")
     else:
         lines.append("  (自动会话, 无人工输入)")
     tools = sorted((s.get("tools") or {}).items(), key=lambda kv: -kv[1])

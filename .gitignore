@@ -10,3 +10,13 @@ config.local.json
 webapp/config.local.json
 # verify-script screenshots of real data
 webapp/screenshots/
+
+# Local runtimes, agent continuation state and secrets
+.omo/
+.venv/
+webapp/.venv/
+node_modules/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example

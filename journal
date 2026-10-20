@@ -6,5 +6,9 @@ while [ -L "$SELF" ]; do
   case "$T" in /*) SELF="$T" ;; *) SELF="$(dirname "$SELF")/$T" ;; esac
 done
 BASE="$(cd "$(dirname "$SELF")" && pwd)"
-PY="$(command -v python3 || command -v python)"
+if [ -x "$BASE/webapp/.venv/bin/python" ]; then
+  PY="$BASE/webapp/.venv/bin/python"
+else
+  PY="$(command -v python3 || command -v python)"
+fi
 exec "$PY" "$BASE/journal.py" "$@"
