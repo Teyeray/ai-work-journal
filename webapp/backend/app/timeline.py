@@ -1,7 +1,7 @@
 """Day timeline projection: human / agent / evidence / unknown lanes.
 
-Facts: AW window events (foreground) minus AW afk intervals (user away) =
-human active segments, clipped to the local day. Merged into blocks by
+Facts: AW window events (foreground) minus AW afk intervals (user away) of at
+least config.AFK_MIN_SEC = human active segments, clipped to the local day. Merged into blocks by
 (project label, activity type). Unknown = gaps inside the observed span.
 Manual overrides patch labels/ranges afterwards and always win.
 
@@ -12,7 +12,7 @@ import hashlib
 import json
 from collections import Counter
 
-from . import db, episodes, projects
+from . import config, db, episodes, projects
 from .timeutil import day_bounds, local_day_key, parse_ts, tz
 
 MERGE_GAP = dt.timedelta(seconds=90)
@@ -108,7 +108,9 @@ def _active_segments(day_key: str):
     afk_union = _union([(e["ts"], e["ts"] + dt.timedelta(seconds=e["dur"]))
                         for e in evs if e["type"] == "aw_afk"
                         and (e["data"].get("status") == "afk")])
-    afk = [iv for iv in (_clip(x, start, end) for x in afk_union) if iv]
+    # short idle stretches are reading / watching an agent, not leaving the desk
+    afk = [iv for iv in (_clip(x, start, end) for x in afk_union
+                         if (x[1] - x[0]).total_seconds() >= config.AFK_MIN_SEC) if iv]
     segs = []
     for e in evs:
         if e["type"] != "aw_window":

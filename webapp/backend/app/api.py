@@ -148,14 +148,17 @@ import hashlib as _hl
 
 
 def _day_fingerprint(day: str) -> str:
-    """Change-detect: max event id + overrides touching the day."""
-    mx = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM source_events WHERE day_key=?", (day,))
+    """Change-detect: max event id / last update + overrides touching the day."""
+    # observed_at moves when an AW event's duration is updated in place
+    mx = db.q1("SELECT COUNT(*) || ':' || COALESCE(MAX(id),0) || '@' || COALESCE(MAX(observed_at),'') AS m "
+               "FROM source_events WHERE day_key=?", (day,))
     # events stored on the previous day can cross midnight into this day
-    prev = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM source_events WHERE day_key=?",
+    prev = db.q1("SELECT COUNT(*) || ':' || COALESCE(MAX(id),0) || '@' || COALESCE(MAX(observed_at),'') AS m "
+                 "FROM source_events WHERE day_key=?",
                  ((dt.date.fromisoformat(day) - dt.timedelta(days=1)).isoformat(),))
     ov = db.q1("SELECT COALESCE(MAX(id),0) AS m FROM manual_overrides "
                "WHERE day_key=? AND superseded_by IS NULL", (day,))["m"]
-    return f"{mx['m']}|{prev['m']}|{ov}|{projects.rules_version()}|v11"
+    return f"{mx['m']}|{prev['m']}|{ov}|{projects.rules_version()}|v12"
 
 
 def cached_timeline(day: str) -> dict:

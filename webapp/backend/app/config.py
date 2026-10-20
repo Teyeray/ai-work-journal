@@ -84,6 +84,8 @@ LLM_CLASSIFY_ENABLED = bool(LLM_CLASSIFY["enabled"] and LLM_API_KEY and LLM_BASE
                             and not os.environ.get("JOURNAL_LLM_DISABLE"))
 
 GIT_AUTHORS = list(_web_cfg.get("git_authors", []))
+# AFK shorter than this (reading, watching an agent work) still counts as your time
+AFK_MIN_SEC = int(_web_cfg.get("afk_min_minutes", 20)) * 60
 
 RUNNING_THRESHOLD_SEC = int(_web_cfg.get("running_threshold_sec", 1800))
 

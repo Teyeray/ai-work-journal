@@ -128,3 +128,44 @@ def test_window_visits_second_precision_and_join(env):
     assert [(v["app"], v["title"]) for v in w] == [("google-chrome", "ChatGPT"), ("zotero", "rsi survey paper")]
     assert w[0]["start"].endswith("09:00:00+08:00") and w[0]["end"].endswith("09:00:53+08:00")
     assert w[1]["project"] == "RSI"
+
+
+def test_short_afk_counts_as_your_time(env):
+    # reading / watching an agent for 10 min without input is not leaving the desk
+    load_aw([
+        aw_event(D, "09:00", 120, app="ghostty", title="bash"),
+        aw_event(D, "09:30", 10, kind="aw_afk", status="afk"),
+        aw_event(D, "10:00", 30, kind="aw_afk", status="afk"),
+    ])
+    mm = m()
+    assert mm["afk_sec"] == 30 * 60
+    assert mm["human_active_sec"] == 90 * 60
+
+
+def test_aw_scan_updates_growing_and_clipped_events(env, monkeypatch):
+    """AW grows an open event in place (same id) and clips events to the query
+    range: re-scans must keep the earliest start and the latest end."""
+    from app.adapters import aw
+    from app import db
+    monkeypatch.setattr(aw, "_buckets", lambda: ("h", "win", "afk"))
+    t0 = "2026-10-07T01:00:00+00:00"
+    win = {"id": 7, "timestamp": t0, "data": {"app": "ghostty", "title": "bash"}}
+    afk = []
+    replies = {"win": [{**win, "duration": 60}], "afk": afk}
+    monkeypatch.setattr(aw, "_get", lambda url: replies["win" if "/win/" in url else "afk"])
+
+    def stored():
+        r = db.q1("SELECT occurred_at, payload FROM source_events WHERE event_key='aw-win-7'")
+        return r["occurred_at"], json.loads(r["payload"])["duration"]
+
+    aw.scan()
+    assert stored() == ("2026-10-07T01:00:00+00:00", 60)
+    replies["win"] = [{**win, "duration": 3600}]          # heartbeats grew it
+    r = aw.scan()
+    assert (r["new"], r["updated"]) == (0, 1)
+    assert stored() == ("2026-10-07T01:00:00+00:00", 3600)
+    # a later scan sees it clipped to its start: still 01:00 + 3600s… and longer
+    replies["win"] = [{**win, "timestamp": "2026-10-07T01:30:00+00:00", "duration": 2400}]
+    aw.scan()
+    assert stored() == ("2026-10-07T01:00:00+00:00", 4200)
+    assert aw.scan()["updated"] == 0                      # unchanged: no rewrite
