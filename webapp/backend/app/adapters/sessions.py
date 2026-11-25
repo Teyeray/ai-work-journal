@@ -28,32 +28,65 @@ def optional_sources_status() -> dict:
 
 
 def scan_optional(days_back: int = 2) -> dict:
-    """Ingest the optional Codex / OpenCode agent sources.
+    """Incrementally ingest optional sources; days_back is retained for callers.
 
-    Idempotent by content: every event key is sha256(source|native session|
-    timestamp|text), so re-scanning an unchanged day inserts nothing. Sources
-    that are not configured are reported as skipped, never silently.
+    Background checkpoints cover changed content irrespective of event age.
+    Reporting collectors keep their separate time-bounded interfaces.
     """
+    # Independent commits: a broken source/projection cannot roll back its sibling.
+    results, errors = [], {}
+    for agent in ("codex", "opencode"):
+        try:
+            with db.Tx():
+                results.append(_scan_optional_locked(days_back, (agent,)))
+        except Exception as exc:
+            errors[agent] = str(exc)
+    return {"source": "sessions:optional", "new": sum(r["new"] for r in results),
+            "days": sorted({d for r in results for d in r["days"]}),
+            "sessions": sum(r["sessions"] for r in results),
+            "agents": sorted({a for r in results for a in r["agents"]}),
+            "session_keys": [k for r in results for k in r.get("session_keys", [])],
+            "skipped": {k: v for r in results for k, v in r["skipped"].items()},
+            "errors": {**{k: v for r in results for k, v in r["errors"].items()}, **errors}}
+
+
+def _scan_optional_locked(days_back, agents):
+    sessions, checkpoints = [], {}
+    settings = agent_sources.cfg()
     end = now_utc()
     start = end - dt.timedelta(days=days_back)
-    try:
-        sessions = agent_sources.collect(start, end)
-    except Exception:  # noqa: BLE001 — never let an optional source break ingest
-        sessions = []
+    errors = {}
+    for agent in agents:
+        key = "sessions:" + agent + ":incremental-v2"
+        previous = db.q1("SELECT cursor_json FROM source_cursors WHERE source_key=?", (key,))
+        previous = json.loads(previous["cursor_json"]) if previous else {}
+        try:
+            found, checkpoint = agent_sources.collect_incremental(agent, start, end, settings, previous)
+        except Exception as exc:
+            errors[agent] = str(exc)
+            continue
+        errors.update(settings.pop("_errors", {}))
+        sessions.extend(found)
+        if checkpoint != previous:
+            checkpoints[key] = checkpoint
     status = agent_sources.status()
     skipped = {k: v["skip_reason"] for k, v in status.items()
                if isinstance(v, dict) and v.get("skip_reason")}
     if not sessions:
+        for key, checkpoint in checkpoints.items():
+            _save_cursor(key, checkpoint)
         return {"source": "sessions:optional", "new": 0, "days": [], "skipped": skipped,
-                "sessions": 0, "agents": []}
+                "sessions": 0, "agents": [], "errors": errors}
     by_source: dict = {}
     for s in sessions:
         by_source.setdefault(s["agent"], []).append(s)
     total_new, affected = 0, set()
+    changed = {}
     with db.Tx():
         for agent, group in by_source.items():
             prefix = f"sessions:{agent}"
             for s in group:
+                material = not db.q1("SELECT id FROM agent_sessions WHERE source=? AND external_id=?", (agent, s["file"]))
                 native = s.get("native_id") or s["file"]
                 meta = {"cwd": s.get("cwd"), "session_id": native, "native_id": native,
                         "native_parent_id": s.get("native_parent_id"),
@@ -61,14 +94,20 @@ def scan_optional(days_back: int = 2) -> dict:
                         "forked_from_id": s.get("forked_from_id"),
                         "user_channel": bool(s.get("user_channel", True)),
                         "self_run": bool(s.get("self_run", False)), "file": s["file"]}
-                r = db.ex("INSERT INTO source_events(source_key,event_key,event_type,"
-                          "occurred_at,observed_at,day_key,payload,created_at) "
-                          "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_key,event_key) DO NOTHING",
-                          (prefix, _sha(f"{prefix}|meta|{native}"), "session_meta",
-                           iso(s["first"]), iso(now_utc()), local_day_key(s["first"]),
-                           json.dumps(meta, ensure_ascii=False), iso(now_utc())))
-                total_new += r.rowcount
-                affected.add(local_day_key(s["first"]))
+                meta_key = _sha(f"{prefix}|meta|{native}")
+                meta_body = json.dumps(meta, ensure_ascii=False)
+                prior_meta = db.q1("SELECT id,payload,day_key FROM source_events WHERE source_key=? AND event_key=?", (prefix, meta_key))
+                if not prior_meta:
+                    db.ex("INSERT INTO source_events(source_key,event_key,event_type,occurred_at,observed_at,day_key,payload,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                          (prefix, meta_key, "session_meta", iso(s["first"]), iso(now_utc()), local_day_key(s["first"]), meta_body, iso(now_utc())))
+                    total_new += 1
+                    material = True
+                    affected.add(local_day_key(s["first"]))
+                elif prior_meta["payload"] != meta_body:
+                    db.ex("UPDATE source_events SET payload=? WHERE id=?", (meta_body, prior_meta["id"]))
+                    material = True
+                    affected.add(prior_meta["day_key"])
+                # Key lookups preserve legacy IDs without reading old session payloads.
                 for turn in s.get("turns") or []:
                     ts = parse_ts(turn.get("t"))
                     if ts is None:
@@ -76,23 +115,52 @@ def scan_optional(days_back: int = 2) -> dict:
                     role = turn.get("role") or "user"
                     event_type = "msg_" + (role if role in ("user", "assistant", "tool") else "assistant")
                     ev = _sha(f"{prefix}|{native}|{turn.get('native_event_id') or ''}|{turn.get('t')}|{role}|{turn.get('x', '')}")
+                    body = json.dumps({"role": role, "success": turn.get("success"),
+                        "text": (turn.get("x") or "")[:4000], "typed": bool(turn.get("typed", False)),
+                        "file": s["file"], "native_event_id": turn.get("native_event_id"),
+                        "message_id": turn.get("message_id")}, ensure_ascii=False)
+                    old = db.q1("SELECT id,payload,day_key,occurred_at FROM source_events WHERE source_key=? AND event_key=?", (prefix, ev))
+                    if not old and turn.get("native_event_id"):
+                        old = db.q1("SELECT id,payload,day_key,occurred_at FROM source_events WHERE source_key=? "
+                                     "AND json_extract(payload,'$.native_event_id')=?",
+                                     (prefix, turn["native_event_id"]))
+                    if old:
+                        if old["payload"] != body or old["occurred_at"] != iso(ts):
+                            db.ex("UPDATE source_events SET payload=?,occurred_at=?,day_key=?,event_type=? WHERE id=?",
+                                  (body, iso(ts), local_day_key(ts), event_type, old["id"]))
+                            previous_body = json.loads(old["payload"])
+                            current_body = json.loads(body)
+                            for field in ("native_event_id", "message_id"):
+                                previous_body.pop(field, None)
+                                current_body.pop(field, None)
+                            if previous_body != current_body or old["occurred_at"] != iso(ts):
+                                material = True
+                                db.ex("DELETE FROM daily_projections WHERE day_key IN (?,?)",
+                                  (old["day_key"], local_day_key(ts)))
+                            affected.update((old["day_key"], local_day_key(ts)))
+                        continue
                     r = db.ex("INSERT INTO source_events(source_key,event_key,event_type,"
                               "occurred_at,observed_at,day_key,payload,created_at) "
                               "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_key,event_key) DO NOTHING",
                               (prefix, ev, event_type, iso(ts), iso(now_utc()),
                                local_day_key(ts),
-                               json.dumps({"role": role, "success": turn.get("success"), "text": (turn.get("x") or "")[:4000],
-                                           "typed": bool(turn.get("typed", False)),
-                                           "file": s["file"]}, ensure_ascii=False),
+                               body,
                                iso(now_utc())))
                     total_new += r.rowcount
+                    material = material or bool(r.rowcount)
                     affected.add(local_day_key(ts))
+                if material:
+                    changed.setdefault(agent, set()).add(s["file"])
+                # Bounded/incremental reads never authorize deletion of prior evidence.
         for agent in by_source:
             db.log_sync(f"sessions:{agent}", 0)
     for agent in by_source:
-        _refresh_sessions(agent, [])
+        _refresh_sessions(agent, [], changed.get(agent, set()))
+    for key, checkpoint in checkpoints.items():
+        _save_cursor(key, checkpoint)
     return {"source": "sessions:optional", "new": total_new, "days": sorted(affected),
-            "skipped": skipped, "sessions": len(sessions), "agents": sorted(by_source)}
+            "skipped": skipped, "errors": errors, "sessions": len(sessions), "agents": sorted(by_source),
+            "session_keys": [(agent, f) for agent, files in changed.items() for f in files]}
 
 
 def _sha(s: str) -> str:
@@ -108,10 +176,10 @@ def _iter_files(root):
             yield f
 
 
-def _cursors() -> dict:
+def _cursors(prefix) -> dict:
     return {r["source_key"]: json.loads(r["cursor_json"])
             for r in db.q("SELECT source_key, cursor_json FROM source_cursors "
-                          "WHERE source_key LIKE 'sessions:%'")}
+                          "WHERE source_key LIKE ?", (prefix + ":%",))}
 
 
 def _save_cursor(source_key, cursor):
@@ -281,8 +349,9 @@ def scan(source: str) -> dict:
     prefix = f"sessions:{source}"
     total_new, affected_days = 0, set()
     running_sessions = []
+    changed = set()
     with db.Tx():
-        cursors = _cursors()
+        cursors = _cursors(prefix)
         for f in _iter_files(root):
             key = f"{prefix}:{f}"
             try:
@@ -292,17 +361,31 @@ def scan(source: str) -> dict:
             cur = cursors.get(key) or {}
             offset = int(cur.get("offset", 0))
             fsize = st.st_size
-            if fsize < offset:
+            signature = [st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns]
+            if cur.get("signature") == signature:
+                if time.time() - st.st_mtime < config.RUNNING_THRESHOLD_SEC:
+                    running_sessions.append(str(f))
+                continue
+            if (fsize < offset or (cur.get("signature") and
+                    (cur["signature"][:2] != signature[:2] or
+                     fsize <= cur.get("size", 0))) or
+                    (cur and not cur.get("signature") and fsize <= cur.get("size", offset)
+                     and cur.get("mtime") != st.st_mtime)):
                 # truncated/rotated: drop stale events for this file, rescan whole
                 stale = db.q("SELECT day_key FROM source_events WHERE source_key=? "
                              "AND json_extract(payload,'$.file')=?", (prefix, str(f)))
                 for sr in stale:
                     if sr["day_key"]:
                         affected_days.add(sr["day_key"])
+                db.ex("DELETE FROM session_event_links WHERE event_id IN (SELECT id FROM source_events WHERE source_key=? AND json_extract(payload,'$.file')=?)", (prefix, str(f)))
                 db.ex("DELETE FROM source_events WHERE source_key=? "
                       "AND json_extract(payload,'$.file')=?", (prefix, str(f)))
                 offset = 0
+                changed.add(str(f))
             if fsize == offset and fsize > 0:
+                # Upgrade a legacy byte cursor without reopening unchanged content.
+                _save_cursor(key, {"offset": offset, "size": fsize,
+                                   "mtime": st.st_mtime, "signature": signature})
                 # no new bytes; still check running status
                 if time.time() - st.st_mtime < config.RUNNING_THRESHOLD_SEC:
                     running_sessions.append(str(f))
@@ -344,31 +427,58 @@ def scan(source: str) -> dict:
                     if r.rowcount:
                         new_events += 1
                         affected_days.add(local_day_key(ts))
-                    last_offset = offset + pos
+                last_offset = offset + pos
                 commit_offset = last_offset  # trailing fragment stays uncommitted
             else:
                 commit_offset = offset
             _save_cursor(key, {"offset": commit_offset, "size": st.st_size,
-                               "mtime": st.st_mtime})
+                               "mtime": st.st_mtime, "signature": signature})
+            if new_events:
+                changed.add(str(f))
             total_new += new_events
             if time.time() - st.st_mtime < config.RUNNING_THRESHOLD_SEC:
                 running_sessions.append(str(f))
+        # Status can revive on an unfinished append before it yields an event.
+        for f in running_sessions:
+            row = db.q1("SELECT status FROM agent_sessions WHERE source=? AND external_id=?", (source, f))
+            if row and row["status"] != "running":
+                changed.add(f)
+        # Only running projections need expiry checks; no historical payload walk.
+        for row in db.q("SELECT external_id FROM agent_sessions WHERE source=? AND status='running'", (source,)):
+            if row["external_id"] not in running_sessions:
+                changed.add(row["external_id"])
+        marker = prefix + ":projection-v2"
+        if not db.get_meta(marker):
+            # Existing projections/IDs are authoritative during a legacy warmup.
+            # Only repair files that have events but no projection at all.
+            if not db.q1("SELECT id FROM agent_sessions WHERE source=? LIMIT 1", (source,)):
+                changed.update(r["file"] for r in db.q(
+                    "SELECT DISTINCT json_extract(payload,'$.file') AS file FROM source_events WHERE source_key=?", (prefix,)))
+            db.set_meta(marker, "1")
+        _refresh_sessions(source, running_sessions, changed)
         db.log_sync(prefix, total_new)
-    _refresh_sessions(source, running_sessions)
-    return {"source": prefix, "new": total_new, "days": sorted(affected_days)}
+    return {"source": prefix, "new": total_new, "days": sorted(affected_days),
+            "session_keys": [(source, f) for f in changed]}
 
 
-def _refresh_sessions(source: str, running_files: list):
+def _refresh_sessions(source: str, running_files: list, changed=None):
     """(Re)build agent_sessions rows from stored events of this source."""
     prefix = f"sessions:{source}"
-    # prune links to deleted events and sessions whose file no longer has events
-    db.ex("DELETE FROM session_event_links WHERE event_id NOT IN (SELECT id "
-          "FROM source_events)")
-    db.ex("DELETE FROM agent_sessions WHERE source=? AND external_id NOT IN "
-          "(SELECT DISTINCT json_extract(payload,'$.file') FROM source_events "
-          "WHERE source_key=?)", (source, prefix))
-    rows = db.q("SELECT id, event_type, occurred_at, payload FROM source_events "
-                "WHERE source_key=? ORDER BY occurred_at", (prefix,))
+    if changed is None:
+        changed = {r["file"] for r in db.q(
+            "SELECT DISTINCT json_extract(payload,'$.file') AS file FROM source_events WHERE source_key=?",
+            (prefix,))}
+    if not changed:
+        return
+    rows = []
+    for f in changed:
+        events = db.q("SELECT id, event_type, occurred_at, payload FROM source_events "
+                      "WHERE source_key=? AND json_extract(payload,'$.file')=? ORDER BY occurred_at,id",
+                      (prefix, f))
+        if not events:
+            db.ex("DELETE FROM session_event_links WHERE session_id IN (SELECT id FROM agent_sessions WHERE source=? AND external_id=?)", (source, f))
+            db.ex("DELETE FROM agent_sessions WHERE source=? AND external_id=?", (source, f))
+        rows.extend(events)
     by_file = {}
     for r in rows:
         p = json.loads(r["payload"])
@@ -379,7 +489,6 @@ def _refresh_sessions(source: str, running_files: list):
         if p.get("cwd") and (r["event_type"] == "session_meta" or not s["cwd"]):
             s["cwd"] = p["cwd"]
         s["events"].append((r["id"], r["event_type"], r["occurred_at"], p))
-    now = iso(now_utc())
     for f, s in by_file.items():
         evs = s["events"]
         first, last = evs[0][2], evs[-1][2]
@@ -388,11 +497,12 @@ def _refresh_sessions(source: str, running_files: list):
         if not cwd:
             root = config.PI_SESSIONS_DIR if source == "pi" else config.CLAUDE_SESSIONS_DIR
             cwd = _cwd_from_dir(_session_dir(f, root))
-        existing = db.q1("SELECT id, status FROM agent_sessions WHERE source=? AND external_id=?",
+        existing = db.q1("SELECT id, status, cwd, start_at, end_at FROM agent_sessions WHERE source=? AND external_id=?",
                          (source, f))
         if existing:
-            db.ex("UPDATE agent_sessions SET cwd=?, start_at=?, end_at=?, status=? WHERE id=?",
-                  (cwd, first, last, status, existing["id"]))
+            if (existing["cwd"], existing["start_at"], existing["end_at"], existing["status"]) != (cwd, first, last, status):
+                db.ex("UPDATE agent_sessions SET cwd=?, start_at=?, end_at=?, status=? WHERE id=?",
+                      (cwd, first, last, status, existing["id"]))
             sid = existing["id"]
         else:
             db.ex("INSERT INTO agent_sessions(source,external_id,cwd,start_at,end_at,status) "
@@ -402,5 +512,7 @@ def _refresh_sessions(source: str, running_files: list):
         # link events to session (idempotent)
         for i, (eid, etype, ts, p) in enumerate(evs):
             db.ex("INSERT INTO session_event_links(session_id,event_id,ordinal) "
-                  "VALUES(?,?,?) ON CONFLICT(session_id,event_id) DO NOTHING",
+                  "VALUES(?,?,?) ON CONFLICT(session_id,event_id) DO UPDATE SET ordinal=excluded.ordinal WHERE ordinal != excluded.ordinal",
                   (sid, eid, i))
+    from ..ingest import _link_session_projects
+    _link_session_projects([(source, f) for f in by_file])

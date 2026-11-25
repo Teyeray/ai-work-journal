@@ -75,6 +75,14 @@ def migrate(conn: sqlite3.Connection) -> None:
                 key TEXT PRIMARY KEY, engine TEXT, text TEXT, created_at TEXT NOT NULL)""")
             conn.execute("PRAGMA user_version = 5")
 
+        if v < 6:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_links_event ON session_event_links(event_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source_file ON source_events(source_key, json_extract(payload,'$.file'), occurred_at)")
+            conn.execute("PRAGMA user_version = 6")
+        if v < 7:
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_native_part ON source_events(source_key, json_extract(payload,'$.native_event_id'))")
+            conn.execute("PRAGMA user_version = 7")
+
 
 def q(sql, params=()):
     return connect().execute(sql, params).fetchall()
