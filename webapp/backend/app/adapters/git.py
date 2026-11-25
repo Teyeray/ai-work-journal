@@ -1,8 +1,8 @@
 """Git adapter: commits from all repos under configured project_roots.
 
 Idempotency: event_key = 'git-<repo>-<commit_sha>'.
-Cursor: none needed (commits immutable); full log since the first tracked day,
-dedupe by sha. Cheap enough for local repos.
+Cursor: last successfully scanned HEAD per repository. Quiet polls resolve HEAD
+only; changed heads enumerate newly reachable commits. Existing events are archival.
 """
 import datetime as dt
 import json
@@ -32,10 +32,24 @@ def scan() -> dict:
     now = iso(now_utc())
     with db.Tx():
         for repo in _repos():
+            key = "git:" + str(repo)
             try:
-                r = subprocess.run(["git", "-C", str(repo), "log", f"--since={SINCE}",
-                                    "--pretty=%H%x1f%aI%x1f%s%x1f%an"],
+                head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                      capture_output=True, text=True, timeout=10)
+                if head.returncode:
+                    continue
+                revision = head.stdout.strip()
+                previous = db.get_meta(key)
+                if previous == revision:
+                    continue
+                args = ["git", "-C", str(repo), "log", f"--since={SINCE}",
+                        "--pretty=%H%x1f%aI%x1f%s%x1f%an", revision]
+                r = subprocess.run(args + (["^" + previous] if previous else []),
                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+                if r.returncode != 0 and previous:
+                    # Old object may have been garbage-collected after a force reset.
+                    r = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", timeout=30)
                 if r.returncode != 0:
                     continue
             except Exception:
@@ -61,6 +75,7 @@ def scan() -> dict:
                 if rr.rowcount:
                     total_new += 1
                     affected_days.add(local_day_key(ts))
+            db.set_meta(key, revision)
         db.log_sync("git", total_new)
     return {"source": "git", "new": total_new, "days": sorted(affected_days)}
 

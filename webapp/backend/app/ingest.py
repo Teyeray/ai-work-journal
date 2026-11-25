@@ -8,19 +8,28 @@ from .adapters import aw, sessions, git
 
 
 def run_all() -> dict:
-    results = [aw.scan(), sessions.scan("pi"), sessions.scan("claude"), git.scan(),
-               sessions.scan_optional()]
+    results = []
+    for name, scan in (("activitywatch", aw.scan), ("sessions:pi", lambda: sessions.scan("pi")),
+                       ("sessions:claude", lambda: sessions.scan("claude")), ("git", git.scan),
+                       ("sessions:optional", sessions.scan_optional)):
+        try:
+            results.append(scan())
+        except Exception as exc:
+            results.append({"source": name, "new": 0, "days": [], "error": str(exc)})
     days = sorted(set(d for r in results for d in r.get("days", [])))
-    _link_session_projects()
     return {"results": results, "affected_days": days,
             "optional_agent_sources": sessions.optional_sources_status(),
             "total_new": sum(r.get("new", 0) for r in results)}
 
 
-def _link_session_projects() -> None:
-    """Classify each session cwd once per scan; set agent label + project_id."""
+def _link_session_projects(keys) -> None:
+    """Classify changed unassigned sessions within their ingestion transaction."""
     from . import projects
-    for s in db.q("SELECT id, source, cwd FROM agent_sessions WHERE project_id IS NULL"):
+    for source, external_id in keys:
+        s = db.q1("SELECT id, source, cwd FROM agent_sessions WHERE source=? AND external_id=? AND project_id IS NULL",
+                   (source, external_id))
+        if not s:
+            continue
         label = projects.classify_for_session(s["cwd"] or "")
         if label == "Unassigned":
             continue
@@ -31,7 +40,7 @@ def _link_session_projects() -> None:
 
 
 def status() -> dict:
-    rows = db.q("SELECT source_key, revision, last_scan_at, cursor_json "
+    rows = db.q("SELECT source_key, revision, last_scan_at "
                 "FROM source_cursors ORDER BY source_key")
     counts = {r["source_key"]: r["n"] for r in db.q(
         "SELECT source_key, COUNT(*) AS n FROM source_events GROUP BY source_key")}
