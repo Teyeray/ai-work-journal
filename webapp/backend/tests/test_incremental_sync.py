@@ -1,6 +1,7 @@
 """Synthetic-only regression tests for persistent incremental dashboard ingest."""
 import datetime as dt
 import json
+import os
 import sqlite3
 
 import pytest
@@ -9,6 +10,13 @@ import pytest
 def line(text, ts="2026-01-01T00:00:00Z"):
     return json.dumps({"type": "message", "timestamp": ts,
                        "message": {"role": "user", "content": text}}) + "\n"
+
+
+def mark_same_size_rewrite(path, previous):
+    # Consecutive writes can have identical filesystem timestamps on Windows.
+    current = path.stat()
+    assert current.st_size == previous.st_size
+    os.utime(path, ns=(current.st_atime_ns, previous.st_mtime_ns + 1_000_000_000))
 
 
 def test_quiet_partial_and_restart(env, monkeypatch):
@@ -60,7 +68,9 @@ def test_same_size_rewrite_and_expiry(env, monkeypatch):
     f = env.PI_SESSIONS_DIR / "s.jsonl"
     f.write_text(line("one"))
     sessions.scan("pi")
+    before = f.stat()
     f.write_text(line("two"))
+    mark_same_size_rewrite(f, before)
     sessions.scan("pi")
     payloads = db.q("SELECT payload FROM source_events")
     assert len(payloads) == 1 and json.loads(payloads[0][0])["text"] == "two"
@@ -109,16 +119,20 @@ def test_optional_reconcile_and_quiet(env, monkeypatch):
     from app import db
     from app.adapters import sessions
     f = env.PI_SESSIONS_DIR / "codex.jsonl"
+    timestamp = (sessions.now_utc() - dt.timedelta(seconds=1)).isoformat()
+
     def write(text):
         f.write_text(json.dumps({"type": "session_meta", "payload": {"id": "s"}}) + "\n" +
-                     json.dumps({"type": "response_item", "timestamp": sessions.now_utc().isoformat(), "payload": {
+                     json.dumps({"type": "response_item", "timestamp": timestamp, "payload": {
                          "type": "message", "role": "assistant", "content": text}}) + "\n")
     monkeypatch.setattr(a, "cfg", lambda: {"codex_dir": str(f.parent), "opencode_db": "",
         "max_bytes": 100000, "max_files": 400, "max_sessions": 400, "max_messages": 5000})
     write("draft")
     sessions.scan_optional()
     sid = db.q1("SELECT id FROM agent_sessions")[0]
+    before = f.stat()
     write("final")
+    mark_same_size_rewrite(f, before)
     sessions.scan_optional()
     assert db.q1("SELECT id FROM agent_sessions")[0] == sid
     # Rewrites archive earlier evidence rather than deleting unseen history.
